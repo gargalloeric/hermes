@@ -11,3 +11,29 @@ func (c *Client) OnText(h Handler) {
 func (c *Client) OnCommand(cmd string, h Handler) {
 	c.On(func(m *Message) bool { return strings.HasPrefix(m.Text, cmd) }, h)
 }
+
+// And combines multiple matchers; all must return true.
+func And(matchers ...Matcher) Matcher {
+	return func(m *Message) bool {
+		for _, matcher := range matchers {
+			if !matcher(m) {
+				return false
+			}
+		}
+
+		return true
+	}
+}
+
+// Or combines multiple matchers; at least one must return true.
+func Or(matchers ...Matcher) Matcher {
+	return func(m *Message) bool {
+		for _, matcher := range matchers {
+			if matcher(m) {
+				return true
+			}
+		}
+
+		return false
+	}
+}
