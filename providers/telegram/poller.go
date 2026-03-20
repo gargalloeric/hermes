@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -109,4 +110,42 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 	}
 
 	return m
+}
+
+func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) error {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", p.token)
+
+	payload := map[string]any{
+		"chat_id": req.RecipientID,
+		"text":    req.Text,
+	}
+
+	if req.ReplyToID != "" {
+		payload["reply_to_message_id"] = req.ReplyToID
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal telegram payload: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to create send request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to execute send request: %w", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram API error: status %d", resp.StatusCode)
+	}
+
+	return nil
 }
