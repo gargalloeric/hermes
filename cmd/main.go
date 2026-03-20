@@ -24,11 +24,15 @@ func main() {
 	)
 
 	chat.OnCommand("/start", func(c *hermes.Context) {
-		c.Reply("Hermes is alive 🛡️!")
+		c.Send("Hermes is alive 🛡️!")
+	})
+
+	chat.OnCommand("/ping", func(c *hermes.Context) {
+		c.Send("Pong!", hermes.AsReply())
 	})
 
 	chat.OnText(func(c *hermes.Context) {
-		c.Reply("You said: " + c.Message.Text)
+		c.Send("You said: " + c.Message.Text)
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

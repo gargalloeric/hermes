@@ -3,10 +3,18 @@ package hermes
 // SendOptions holds configuration for outgoing messages.
 type SendOptions struct {
 	Attachments []Attachment
+	IsReply     bool
 }
 
 // SendOption is a function that modifies SendOptions.
 type SendOption func(*SendOptions)
+
+// AsReply marks the message as a reply/quote of the incoming message.
+func AsReply() SendOption {
+	return func(so *SendOptions) {
+		so.IsReply = true
+	}
+}
 
 // WithImage adds an image attachment to the message.
 func WithImage(url string) SendOption {
