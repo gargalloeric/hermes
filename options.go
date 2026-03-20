@@ -17,3 +17,13 @@ func WithImage(url string) SendOption {
 		})
 	}
 }
+
+// ClientOption defines the signature for configuring the Cerberus Client.
+type ClientOption func(*Client)
+
+// WithProvider registers a communication platform (like Telegram) to the client.
+func WithProvider(p Provider) ClientOption {
+	return func(c *Client) {
+		c.providers = append(c.providers, p)
+	}
+}
