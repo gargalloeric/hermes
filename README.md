@@ -50,7 +50,7 @@ func main() {
 - **Multiplatform:** Write once, deploy to Telegram, Discord(soon) and more.
 - **Unified Context:** Simple `c.Reply()` and `c.SendTo()` methods regardless of the platform.
 - **Concurrent by Design:** Every incoming message is handled in its own goroutine.
-- **Logic Gates:** Combine matchers with `And()`, `Or()` and `Not()`. 
+- **Logic Gates:** Combine matchers with `And()` or `Or()`. 
 
 ## Providers
 
