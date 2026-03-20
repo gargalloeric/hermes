@@ -18,17 +18,20 @@ func NewContext(ctx context.Context, p Provider, msg *Message) *Context {
 	}
 }
 
-// Reply sends a message back to the same chat where the original message originated.
-func (c *Context) Reply(text string, opts ...SendOption) error {
+// Send sends a message back to the same chat where the original message originated.
+func (c *Context) Send(text string, opts ...SendOption) error {
 	req := MessageRequest{
 		RecipientID: c.Message.Sender.ID,
 		Text:        text,
-		ReplyToID:   c.Message.ID, // Hardcoded behavior: always a reply
 	}
 
 	options := &SendOptions{}
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	if options.IsReply {
+		req.ReplyToID = c.Message.ID
 	}
 
 	req.Attachments = options.Attachments

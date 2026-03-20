@@ -32,11 +32,15 @@ func main() {
     )
 
     app.OnCommand("/start", func(c *hermes.Context) {
-        c.Reply("Hermes is alive 🛡️!")
+        c.Send("Hermes is alive 🛡️!")
+    })
+
+    app.OnCommand("/ping", func(c *hermes.Context) {
+        c.Send("Pong!", hermes.AsReply())
     })
 
     app.OnText(func(c *hermes.Context) {
-        c.Reply("Echo: "+c.Message.Text)
+        c.Send("Echo: "+c.Message.Text)
     })
 
     if err := app.Start(context.Background()); err != nil {
@@ -48,7 +52,7 @@ func main() {
 ## Features
 
 - **Multiplatform:** Write once, deploy to Telegram, Discord(soon) and more.
-- **Unified Context:** Simple `c.Reply()` and `c.SendTo()` methods regardless of the platform.
+- **Unified Context:** Simple `c.Send()` and `c.SendTo()` methods regardless of the platform.
 - **Concurrent by Design:** Every incoming message is handled in its own goroutine.
 - **Logic Gates:** Combine matchers with `And()` or `Or()`. 
 
@@ -67,7 +71,7 @@ Combine matchers to create sophisticated filters:
 app.On(
     hermes.And(hermes.IsImage(), hermes.Platform("telegram")),
     func (c *hermes.Context) {
-        c.Reply("A handler only for telegram image messages!")
+        c.Send("A handler only for telegram image messages!")
     }
 )
 ```

@@ -39,7 +39,6 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			// 1. Long polling request
 			url := fmt.Sprintf("%s?offset=%d&timeout=60", baseURL, p.offset)
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 			if err != nil {
