@@ -10,6 +10,7 @@ const (
 	TypeVideo    MessageType = "video"
 	TypeAudio    MessageType = "audio"
 	TypeLocation MessageType = "location"
+	TypeFile     MessageType = "file"
 	TypeEvent    MessageType = "event" // For system notifications
 )
 
