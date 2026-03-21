@@ -17,8 +17,14 @@ type tgMessage struct {
 	Text      string        `json:"text"`
 	Caption   string        `json:"caption"`
 	Photo     []tgPhotoSize `json:"photo"`
+	Video     *tgVideo      `json:"video"`
+	Document  *tgDocument   `json:"document"`
+	Voice     *tgVoice      `json:"voice"`
+	Location  *tgLocation   `json:"location"`
 
-	// TODO: add NewChatMembers here later for System Events
+	// System Events
+	NewChatMembers []tgUser `json:"new_chat_members"`
+	LeftChatMember *tgUser  `json:"left_chat_member"`
 }
 
 type tgUser struct {
@@ -28,4 +34,25 @@ type tgUser struct {
 
 type tgPhotoSize struct {
 	FileID string `json:"file_id"`
+}
+
+type tgVideo struct {
+	FileID   string `json:"file_id"`
+	MimeType string `json:"mime_type"`
+}
+
+type tgDocument struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+}
+
+type tgVoice struct {
+	FileID   string `json:"file_id"`
+	MimeType string `json:"mime_type"`
+}
+
+type tgLocation struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }

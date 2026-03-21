@@ -39,7 +39,7 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			url := fmt.Sprintf("%s?offset=%d&timeout=60", baseURL, p.offset)
+			url := fmt.Sprintf("%s?offset=%d&timeout=60allowed_updates=[\"message\",\"edited_message\",\"chat_member\"]", baseURL, p.offset)
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 			if err != nil {
 				return fmt.Errorf("failed to create polling request: %w", err)
@@ -90,6 +90,7 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 		m.Text = u.Message.Caption
 	}
 
+	// Multimedia handling
 	if len(u.Message.Photo) > 0 {
 		m.Type = hermes.TypeImage
 		// Telegram sends multiple sizes; the last one is always the highest resolution.
@@ -99,10 +100,47 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 			Type: hermes.AttachmentImage,
 			ID:   largest.FileID,
 		})
+	} else if u.Message.Video != nil {
+		m.Type = hermes.TypeVideo
+		m.Attachments = append(m.Attachments, hermes.Attachment{
+			Type:     hermes.AttachmentVideo,
+			ID:       u.Message.Video.FileID,
+			MimeType: u.Message.Video.MimeType,
+		})
+	} else if u.Message.Location != nil {
+		m.Type = hermes.TypeLocation
+		m.Text = fmt.Sprintf("%f,%f", u.Message.Location.Latitude, u.Message.Location.Longitude)
 	}
 
-	// TODO: Handle System Events (New members joining)
-	// if len(u.Message.NewChatMembers) > 0 { ... }
+	if u.Message.Document != nil {
+		m.Type = hermes.TypeFile
+		m.Attachments = append(m.Attachments, hermes.Attachment{
+			Type:     hermes.AttachmentVideo,
+			ID:       u.Message.Document.FileID,
+			MimeType: u.Message.Document.MimeType,
+		})
+	}
+
+	// System events handling
+	if len(u.Message.NewChatMembers) > 0 {
+		m.Type = hermes.TypeEvent
+		m.Event = &hermes.SystemEvent{
+			Type: hermes.EventUserJoined,
+			TargetUser: &hermes.User{
+				ID:       strconv.FormatInt(u.Message.NewChatMembers[0].ID, 10),
+				Username: u.Message.NewChatMembers[0].Username,
+			},
+		}
+	} else if u.Message.LeftChatMember != nil {
+		m.Type = hermes.TypeEvent
+		m.Event = &hermes.SystemEvent{
+			Type: hermes.EventUserLeft,
+			TargetUser: &hermes.User{
+				ID:       strconv.FormatInt(u.Message.LeftChatMember.ID, 10),
+				Username: u.Message.LeftChatMember.Username,
+			},
+		}
+	}
 
 	m.Metadata = map[string]any{
 		"raw_update_id": u.UpdateID,
@@ -112,34 +150,58 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 }
 
 func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) error {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", p.token)
-
+	endpoint := "sendMessage"
 	payload := map[string]any{
 		"chat_id": req.RecipientID,
 		"text":    req.Text,
+	}
+
+	if len(req.Attachments) > 0 {
+		att := req.Attachments[0]
+		switch att.Type {
+		case hermes.AttachmentImage:
+			endpoint = "sendPhoto"
+			payload["photo"] = att.URL
+			payload["caption"] = req.Text
+			delete(payload, "text")
+		case hermes.AttachmentVideo:
+			endpoint = "sendVideo"
+			payload["video"] = att.URL
+			payload["caption"] = req.Text
+			delete(payload, "text")
+		case hermes.AttachmentFile:
+			endpoint = "sendDocument"
+			payload["document"] = att.URL
+			payload["caption"] = req.Text
+			delete(payload, "text")
+		}
 	}
 
 	if req.ReplyToID != "" {
 		payload["reply_to_message_id"] = req.ReplyToID
 	}
 
+	return p.postToTelegram(ctx, endpoint, payload)
+}
+
+func (p *Poller) postToTelegram(ctx context.Context, method string, payload any) error {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", p.token, method)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal telegram payload: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
 		return fmt.Errorf("failed to create send request: %w", err)
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to execute send request: %w", err)
 	}
-
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

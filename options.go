@@ -26,7 +26,17 @@ func WithImage(url string) SendOption {
 	}
 }
 
-// ClientOption defines the signature for configuring the Cerberus Client.
+// WithDocument attaches a file/document to the message.
+func WithDocument(url string) SendOption {
+	return func(so *SendOptions) {
+		so.Attachments = append(so.Attachments, Attachment{
+			Type: AttachmentFile,
+			URL:  url,
+		})
+	}
+}
+
+// ClientOption defines the signature for configuring the Hermes Client.
 type ClientOption func(*Client)
 
 // WithProvider registers a communication platform (like Telegram) to the client.
