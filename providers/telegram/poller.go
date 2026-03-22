@@ -150,7 +150,7 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 	return m
 }
 
-func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) error {
+func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint := "sendMessage"
 	payload := map[string]any{
 		"chat_id": req.RecipientID,
@@ -213,36 +213,50 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) err
 		payload["reply_to_message_id"] = req.ReplyToID
 	}
 
-	return p.postToTelegram(ctx, endpoint, payload)
+	tgResp, err := p.postToTelegram(ctx, endpoint, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &hermes.SentMessage{
+		ID:       strconv.Itoa(tgResp.Result.MessageID),
+		Platform: p.Name(),
+		ChatID:   req.RecipientID,
+	}, nil
 }
 
-func (p *Poller) postToTelegram(ctx context.Context, method string, payload any) error {
+func (p *Poller) postToTelegram(ctx context.Context, method string, payload any) (*tgSendResponse, error) {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", p.token, method)
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal telegram payload: %w", err)
+		return nil, fmt.Errorf("failed to marshal telegram payload: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
 	if err != nil {
-		return fmt.Errorf("failed to create send request: %w", err)
+		return nil, fmt.Errorf("failed to create send request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to execute send request: %w", err)
+		return nil, fmt.Errorf("failed to execute send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return fmt.Errorf("failed reading telegram response body with status code %d: %w", resp.StatusCode, err)
+			return nil, fmt.Errorf("failed reading telegram response body with status code %d: %w", resp.StatusCode, err)
 		}
-		return fmt.Errorf("telegram API error %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("telegram API error %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return nil
+	var tgResp tgSendResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tgResp); err != nil {
+		return nil, fmt.Errorf("failed to decode telegram response: %w", err)
+	}
+
+	return &tgResp, nil
 }

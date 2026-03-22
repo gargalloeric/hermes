@@ -19,7 +19,7 @@ func NewContext(ctx context.Context, p Provider, msg *Message) *Context {
 }
 
 // Send sends a message back to the same chat where the original message originated.
-func (c *Context) Send(text string, opts ...SendOption) error {
+func (c *Context) Send(text string, opts ...SendOption) (*SentMessage, error) {
 	req := MessageRequest{
 		RecipientID: c.Message.Sender.ID,
 		Text:        text,
@@ -40,7 +40,7 @@ func (c *Context) Send(text string, opts ...SendOption) error {
 }
 
 // SendTo allows sending a message to a specific user/group ID on the same platform.
-func (c *Context) SendTo(id string, text string, opts ...SendOption) error {
+func (c *Context) SendTo(id string, text string, opts ...SendOption) (*SentMessage, error) {
 	req := MessageRequest{
 		RecipientID: id,
 		Text:        text,

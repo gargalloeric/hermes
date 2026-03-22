@@ -54,3 +54,11 @@ type Message struct {
 	Event       *SystemEvent
 	Metadata    map[string]any // Escape hatch for platform-specific raw data
 }
+
+// SentMessage is the "receipt" returned by a provider after a successful send.
+type SentMessage struct {
+	ID       string
+	Platform string
+	ChatID   string
+	Metadata map[string]string
+}
