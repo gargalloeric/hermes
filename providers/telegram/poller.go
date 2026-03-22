@@ -14,14 +14,11 @@ import (
 	"github.com/gargalloeric/hermes"
 )
 
-const (
-	apiBaseURL = "https://api.telegram.org/bot%s/%s"
-)
-
 type Poller struct {
-	token  string
-	client *http.Client
-	offset int
+	token   string
+	client  *http.Client
+	offset  int
+	baseURL string
 }
 
 func NewPoller(token string) *Poller {
@@ -30,6 +27,7 @@ func NewPoller(token string) *Poller {
 		client: &http.Client{
 			Timeout: 70 * time.Second, // Must be longer than the Telegram timeout
 		},
+		baseURL: "https://api.telegram.org/bot%s/%s",
 	}
 }
 
@@ -65,7 +63,7 @@ func (p *Poller) getUpdates(ctx context.Context) ([]tgUpdate, error) {
 	params.Set("timeout", "60")
 	params.Set("allowed_updates", `["message","edited_message","chat_member"]`)
 
-	endpoint := fmt.Sprintf(apiBaseURL, p.token, "getUpdates")
+	endpoint := fmt.Sprintf(p.baseURL, p.token, "getUpdates")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+params.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create polling request: %w", err)
@@ -302,7 +300,7 @@ func (p *Poller) buildMediaGroup(req hermes.MessageRequest) []map[string]any {
 }
 
 func (p *Poller) postToTelegram(ctx context.Context, method string, payload any) (*tgSendResponse, error) {
-	url := fmt.Sprintf(apiBaseURL, p.token, method)
+	url := fmt.Sprintf(p.baseURL, p.token, method)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal telegram payload: %w", err)
