@@ -16,7 +16,7 @@ func (c *Client) OnCommand(cmd string, h Handler) {
 
 // OnImage matches a message of type Image.
 func (c *Client) OnImage(h Handler) {
-	c.On(func(m *Message) bool { return m.Type == TypeImage }, h)
+	c.On(IsImage, h)
 }
 
 // OnEvent matches a message of a specific EventType.
@@ -50,6 +50,14 @@ func Or(matchers ...Matcher) Matcher {
 	}
 }
 
+// IsImage matches a message of type Image.
 func IsImage(m *Message) bool {
 	return m.Type == TypeImage
+}
+
+// Platform matches a message comming from platform p.
+func Platform(p string) Matcher {
+	return func(m *Message) bool {
+		return m.Platform == p
+	}
 }
