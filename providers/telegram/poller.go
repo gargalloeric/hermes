@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -156,7 +157,7 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) err
 		"text":    req.Text,
 	}
 
-	if len(req.Attachments) > 0 {
+	if len(req.Attachments) == 1 {
 		att := req.Attachments[0]
 		switch att.Type {
 		case hermes.AttachmentImage:
@@ -175,6 +176,37 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) err
 			payload["caption"] = req.Text
 			delete(payload, "text")
 		}
+	} else if len(req.Attachments) > 1 {
+		endpoint = "sendMediaGroup"
+		var mediaGroup []map[string]any
+
+		for i, att := range req.Attachments {
+			mediaItem := map[string]any{
+				"media": att.URL, // Telegram supports URLs or File IDs here.
+			}
+
+			switch att.Type {
+			case hermes.AttachmentImage:
+				mediaItem["type"] = "photo"
+			case hermes.AttachmentVideo:
+				mediaItem["type"] = "video"
+			case hermes.AttachmentAudio:
+				mediaItem["type"] = "audio"
+			default:
+				// Fallback to document if type is unknown to prevent Telegram from rejecting the whole array.
+				mediaItem["type"] = "document"
+			}
+
+			// In an album, the caption usually goes on the first item.
+			if i == 0 && req.Text != "" {
+				mediaItem["caption"] = req.Text
+				delete(payload, "text")
+			}
+
+			mediaGroup = append(mediaGroup, mediaItem)
+		}
+
+		payload["media"] = mediaGroup
 	}
 
 	if req.ReplyToID != "" {
@@ -205,7 +237,11 @@ func (p *Poller) postToTelegram(ctx context.Context, method string, payload any)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram API error: status %d", resp.StatusCode)
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed reading telegram response body with status code %d: %w", resp.StatusCode, err)
+		}
+		return fmt.Errorf("telegram API error %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

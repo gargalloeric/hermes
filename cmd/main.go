@@ -42,8 +42,8 @@ func main() {
 
 	// Send images to the chat
 	client.OnCommand("/img", func(c *hermes.Context) {
-		dogURL := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
-		c.Send("Here is an image for you!", hermes.WithImage(dogURL))
+		imgURL := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
+		c.Send("Here is an image for you!", hermes.WithImage(imgURL))
 	})
 
 	// React to events
@@ -57,6 +57,36 @@ func main() {
 		reportURL := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
 
 		c.Send("Here is the requested document.", hermes.WithDocument(reportURL))
+	})
+
+	// Send multiple images to the chat
+	client.OnCommand("/album", func(c *hermes.Context) {
+		img1 := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
+		img2 := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
+		img3 := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
+
+		c.Send(
+			"Look at this pack of images",
+			hermes.WithImage(img1),
+			hermes.WithImage(img2),
+			hermes.WithImage(img3),
+			hermes.AsReply(),
+		)
+	})
+
+	// Send multiple documents to the chat
+	client.OnCommand("/documents", func(c *hermes.Context) {
+		doc1 := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+		doc2 := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+		doc3 := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+
+		c.Send(
+			"Look at this pack of documents",
+			hermes.WithDocument(doc1),
+			hermes.WithDocument(doc2),
+			hermes.WithDocument(doc3),
+			hermes.AsReply(),
+		)
 	})
 
 	// Customize the routing predicate with a custom Matcher
