@@ -7,10 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/gargalloeric/hermes"
+)
+
+const (
+	apiBaseURL = "https://api.telegram.org/bot%s/%s"
 )
 
 type Poller struct {
@@ -33,33 +38,18 @@ func (p *Poller) Name() string {
 }
 
 func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
-	baseURL := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", p.token)
-
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			url := fmt.Sprintf("%s?offset=%d&timeout=60allowed_updates=[\"message\",\"edited_message\",\"chat_member\"]", baseURL, p.offset)
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			if err != nil {
-				return fmt.Errorf("failed to create polling request: %w", err)
-			}
-
-			resp, err := p.client.Do(req)
+			updates, err := p.getUpdates(ctx)
 			if err != nil {
 				time.Sleep(2 * time.Second) // Network hiccup, back off safely
 				continue
 			}
 
-			var tgResp tgResponse
-			if err := json.NewDecoder(resp.Body).Decode(&tgResp); err != nil {
-				resp.Body.Close()
-				continue
-			}
-			resp.Body.Close()
-
-			for _, upd := range tgResp.Result {
+			for _, upd := range updates {
 				if msg := p.mapToHermes(upd); msg != nil {
 					out <- msg
 				}
@@ -67,6 +57,32 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 			}
 		}
 	}
+}
+
+func (p *Poller) getUpdates(ctx context.Context) ([]tgUpdate, error) {
+	params := url.Values{}
+	params.Set("offset", strconv.Itoa(p.offset))
+	params.Set("timeout", "60")
+	params.Set("allowed_updates", `["message","edited_message","chat_member"]`)
+
+	endpoint := fmt.Sprintf(apiBaseURL, p.token, "getUpdates")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create polling request: %w", err)
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var tgResp tgResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tgResp); err != nil {
+		return nil, err
+	}
+
+	return tgResp.Result, nil
 }
 
 func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
@@ -91,57 +107,8 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 		m.Text = u.Message.Caption
 	}
 
-	// Multimedia handling
-	if len(u.Message.Photo) > 0 {
-		m.Type = hermes.TypeImage
-		// Telegram sends multiple sizes; the last one is always the highest resolution.
-		largest := u.Message.Photo[len(u.Message.Photo)-1]
-
-		m.Attachments = append(m.Attachments, hermes.Attachment{
-			Type: hermes.AttachmentImage,
-			ID:   largest.FileID,
-		})
-	} else if u.Message.Video != nil {
-		m.Type = hermes.TypeVideo
-		m.Attachments = append(m.Attachments, hermes.Attachment{
-			Type:     hermes.AttachmentVideo,
-			ID:       u.Message.Video.FileID,
-			MimeType: u.Message.Video.MimeType,
-		})
-	} else if u.Message.Location != nil {
-		m.Type = hermes.TypeLocation
-		m.Text = fmt.Sprintf("%f,%f", u.Message.Location.Latitude, u.Message.Location.Longitude)
-	}
-
-	if u.Message.Document != nil {
-		m.Type = hermes.TypeFile
-		m.Attachments = append(m.Attachments, hermes.Attachment{
-			Type:     hermes.AttachmentVideo,
-			ID:       u.Message.Document.FileID,
-			MimeType: u.Message.Document.MimeType,
-		})
-	}
-
-	// System events handling
-	if len(u.Message.NewChatMembers) > 0 {
-		m.Type = hermes.TypeEvent
-		m.Event = &hermes.SystemEvent{
-			Type: hermes.EventUserJoined,
-			TargetUser: &hermes.User{
-				ID:       strconv.FormatInt(u.Message.NewChatMembers[0].ID, 10),
-				Username: u.Message.NewChatMembers[0].Username,
-			},
-		}
-	} else if u.Message.LeftChatMember != nil {
-		m.Type = hermes.TypeEvent
-		m.Event = &hermes.SystemEvent{
-			Type: hermes.EventUserLeft,
-			TargetUser: &hermes.User{
-				ID:       strconv.FormatInt(u.Message.LeftChatMember.ID, 10),
-				Username: u.Message.LeftChatMember.Username,
-			},
-		}
-	}
+	p.mapMultimedia(u.Message, m)
+	p.mapSystemEvents(u.Message, m)
 
 	m.Metadata = map[string]any{
 		"raw_update_id": u.UpdateID,
@@ -150,68 +117,61 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 	return m
 }
 
+func (p *Poller) mapMultimedia(tm *tgMessage, hm *hermes.Message) {
+	if len(tm.Photo) > 0 {
+		hm.Type = hermes.TypeImage
+
+		// Telegram sends multiple sizes; the last one is always the highest resolution.
+		largest := tm.Photo[len(tm.Photo)-1]
+
+		hm.Attachments = append(hm.Attachments, hermes.Attachment{
+			Type: hermes.AttachmentImage,
+			ID:   largest.FileID,
+		})
+	} else if tm.Video != nil {
+		hm.Type = hermes.TypeVideo
+		hm.Attachments = append(hm.Attachments, hermes.Attachment{
+			Type:     hermes.AttachmentVideo,
+			ID:       tm.Video.FileID,
+			MimeType: tm.Video.MimeType,
+		})
+	} else if tm.Document != nil {
+		hm.Type = hermes.TypeFile
+		hm.Attachments = append(hm.Attachments, hermes.Attachment{
+			Type:     hermes.AttachmentFile,
+			ID:       tm.Document.FileID,
+			MimeType: tm.Document.MimeType,
+		})
+	} else if tm.Location != nil {
+		hm.Type = hermes.TypeLocation
+		hm.Text = fmt.Sprintf("%f,%f", tm.Location.Latitude, tm.Location.Longitude)
+	}
+}
+
+func (p *Poller) mapSystemEvents(tm *tgMessage, hm *hermes.Message) {
+	if len(tm.NewChatMembers) > 0 {
+		hm.Type = hermes.TypeEvent
+		hm.Event = &hermes.SystemEvent{
+			Type: hermes.EventUserJoined,
+			TargetUser: &hermes.User{
+				ID:       strconv.FormatInt(tm.NewChatMembers[0].ID, 10),
+				Username: tm.NewChatMembers[0].Username,
+			},
+		}
+	} else if tm.LeftChatMember != nil {
+		hm.Type = hermes.TypeEvent
+		hm.Event = &hermes.SystemEvent{
+			Type: hermes.EventUserLeft,
+			TargetUser: &hermes.User{
+				ID:       strconv.FormatInt(tm.LeftChatMember.ID, 10),
+				Username: tm.LeftChatMember.Username,
+			},
+		}
+	}
+}
+
 func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	endpoint := "sendMessage"
-	payload := map[string]any{
-		"chat_id": req.RecipientID,
-		"text":    req.Text,
-	}
-
-	if len(req.Attachments) == 1 {
-		att := req.Attachments[0]
-		switch att.Type {
-		case hermes.AttachmentImage:
-			endpoint = "sendPhoto"
-			payload["photo"] = att.URL
-			payload["caption"] = req.Text
-			delete(payload, "text")
-		case hermes.AttachmentVideo:
-			endpoint = "sendVideo"
-			payload["video"] = att.URL
-			payload["caption"] = req.Text
-			delete(payload, "text")
-		case hermes.AttachmentFile:
-			endpoint = "sendDocument"
-			payload["document"] = att.URL
-			payload["caption"] = req.Text
-			delete(payload, "text")
-		}
-	} else if len(req.Attachments) > 1 {
-		endpoint = "sendMediaGroup"
-		var mediaGroup []map[string]any
-
-		for i, att := range req.Attachments {
-			mediaItem := map[string]any{
-				"media": att.URL, // Telegram supports URLs or File IDs here.
-			}
-
-			switch att.Type {
-			case hermes.AttachmentImage:
-				mediaItem["type"] = "photo"
-			case hermes.AttachmentVideo:
-				mediaItem["type"] = "video"
-			case hermes.AttachmentAudio:
-				mediaItem["type"] = "audio"
-			default:
-				// Fallback to document if type is unknown to prevent Telegram from rejecting the whole array.
-				mediaItem["type"] = "document"
-			}
-
-			// In an album, the caption usually goes on the first item.
-			if i == 0 && req.Text != "" {
-				mediaItem["caption"] = req.Text
-				delete(payload, "text")
-			}
-
-			mediaGroup = append(mediaGroup, mediaItem)
-		}
-
-		payload["media"] = mediaGroup
-	}
-
-	if req.ReplyToID != "" {
-		payload["reply_to_message_id"] = req.ReplyToID
-	}
+	endpoint, payload := p.buildPayload(req)
 
 	tgResp, err := p.postToTelegram(ctx, endpoint, payload)
 	if err != nil {
@@ -225,8 +185,104 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*h
 	}, nil
 }
 
+func (p *Poller) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
+	// Handle simple text
+	if len(req.Attachments) == 0 {
+		return p.handleOnlyText(req)
+	}
+
+	// Handle single attachment
+	if len(req.Attachments) == 1 {
+		return p.handleSingleAttachment(req)
+	}
+
+	// Handle Albums
+	return p.handleMultiAttachment(req)
+}
+
+func (p *Poller) handleOnlyText(req hermes.MessageRequest) (string, map[string]any) {
+	payload := map[string]any{
+		"chat_id": req.RecipientID,
+		"text":    req.Text,
+	}
+
+	if req.ReplyToID != "" {
+		payload["reply_to_message_id"] = req.ReplyToID
+	}
+
+	return "sendMessage", payload
+}
+
+func (p *Poller) handleSingleAttachment(req hermes.MessageRequest) (string, map[string]any) {
+	payload := map[string]any{
+		"chat_id": req.RecipientID,
+	}
+
+	if req.Text != "" {
+		payload["caption"] = req.Text
+	}
+
+	if req.ReplyToID != "" {
+		payload["reply_to_message_id"] = req.ReplyToID
+	}
+
+	att := req.Attachments[0]
+
+	switch att.Type {
+	case hermes.AttachmentImage:
+		payload["photo"] = att.URL
+		return "sendPhoto", payload
+	case hermes.AttachmentVideo:
+		payload["video"] = att.URL
+		return "sendVideo", payload
+	default:
+		payload["document"] = att.URL
+		return "sendDocument", payload
+	}
+}
+
+func (p *Poller) handleMultiAttachment(req hermes.MessageRequest) (string, map[string]any) {
+	payload := map[string]any{
+		"chat_id": req.RecipientID,
+		"media":   p.buildMediaGroup(req),
+	}
+
+	if req.ReplyToID != "" {
+		payload["reply_to_message_id"] = req.ReplyToID
+	}
+
+	return "sendMediaGroup", payload
+}
+
+func (p *Poller) buildMediaGroup(req hermes.MessageRequest) []map[string]any {
+	group := make([]map[string]any, len(req.Attachments))
+
+	for i, att := range req.Attachments {
+		item := map[string]any{
+			"media": att.URL,
+		}
+
+		switch att.Type {
+		case hermes.AttachmentImage:
+			item["type"] = "photo"
+		case hermes.AttachmentVideo:
+			item["type"] = "video"
+		default:
+			item["type"] = "document"
+		}
+
+		if i == 0 && req.Text != "" {
+			item["caption"] = req.Text
+		}
+
+		group[i] = item
+	}
+
+	return group
+}
+
 func (p *Poller) postToTelegram(ctx context.Context, method string, payload any) (*tgSendResponse, error) {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", p.token, method)
+	url := fmt.Sprintf(apiBaseURL, p.token, method)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal telegram payload: %w", err)
