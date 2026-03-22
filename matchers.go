@@ -19,8 +19,9 @@ func (c *Client) OnImage(h Handler) {
 	c.On(func(m *Message) bool { return m.Type == TypeImage }, h)
 }
 
-func (c *Client) OnEvent(event EventType, h Handler) {
-	c.On(func(m *Message) bool { return m.Event.Type == event }, h)
+// OnEvent matches a message of a specific EventType.
+func (c *Client) OnEvent(eventType EventType, h Handler) {
+	c.On(func(m *Message) bool { return m.Type == TypeEvent && m.Event.Type == eventType }, h)
 }
 
 // And combines multiple matchers; all must return true.
