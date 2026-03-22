@@ -58,10 +58,11 @@ func main() {
 
 ## Providers
 
-| Platform | Support | Transport |
+| Platform | Transport | Support |
 |----------|---------|-----------|
-| Telegram | ✅ Active| Long Polling / Webhook (Planned) |
-| Discord  | 🏗️ Planned | WebSockets |
+| Telegram | Long Polling | ✅ Active|
+| Telegram | Webhook | 🏗️ Planned |
+| Discord  | WebSockets | 🏗️ Planned |
 
 ## Advance Routing
 
