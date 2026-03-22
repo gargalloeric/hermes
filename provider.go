@@ -18,5 +18,5 @@ type Provider interface {
 	// It should block until the context is canceled or a fatal error occurs.
 	Listen(ctx context.Context, out chan<- *Message) error
 	// SendMessage translates the unified request into platform-specific API calls.
-	SendMessage(ctx context.Context, req MessageRequest) error
+	SendMessage(ctx context.Context, req MessageRequest) (*SentMessage, error)
 }
