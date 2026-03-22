@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gargalloeric/hermes"
 	"github.com/gargalloeric/hermes/providers/telegram"
@@ -87,6 +88,14 @@ func main() {
 			hermes.WithDocument(doc3),
 			hermes.AsReply(),
 		)
+	})
+
+	client.OnCommand("/edit", func(c *hermes.Context) {
+		receipt, _ := c.Send("This message will be edited in 3 seconds...")
+
+		time.Sleep(3 * time.Second)
+
+		c.Edit(receipt, "Edited ✅!")
 	})
 
 	// Customize the routing predicate with a custom Matcher
