@@ -16,6 +16,8 @@ type route struct {
 	handler Handler
 }
 
+// Client is the core Hermes engine. It manages providers and routes incoming
+// messages to the registered handlers.
 type Client struct {
 	providers []Provider
 	routes    []route
@@ -32,6 +34,7 @@ func New(opts ...ClientOption) *Client {
 	return c
 }
 
+// On registers a generic handler that triggers whenever a message matches the provided predicate.
 func (c *Client) On(m Matcher, h Handler) {
 	c.routes = append(c.routes, route{
 		matcher: m,
@@ -39,6 +42,7 @@ func (c *Client) On(m Matcher, h Handler) {
 	})
 }
 
+// Start begins polling for updates from the provider. This is a blocking call.
 func (c *Client) Start(ctx context.Context) error {
 	// A buffered channel to prevent slow dispatching from blocking providers
 	messageChan := make(chan *Message, 100)
