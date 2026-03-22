@@ -1,6 +1,9 @@
 package hermes
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Context represents the environment in which a message is handled.
 type Context struct {
@@ -54,4 +57,20 @@ func (c *Context) SendTo(id string, text string, opts ...SendOption) (*SentMessa
 	req.Attachments = options.Attachments
 
 	return c.provider.SendMessage(c.ctx, req)
+}
+
+// Edit updates the content of a previously sent message.
+// It uses the SentMessage receipt from a previous Send() call as a reference
+// to ensure the correct message is targeted on the platform.
+func (c *Context) Edit(target *SentMessage, text string) (*SentMessage, error) {
+	if target == nil || target.ChatID == "" {
+		return nil, fmt.Errorf("cannot edit: target message reference is empty")
+	}
+
+	req := MessageRequest{
+		RecipientID: target.ChatID,
+		Text:        text,
+	}
+
+	return c.provider.EditMessage(c.ctx, target, req)
 }

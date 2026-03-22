@@ -185,6 +185,26 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*h
 	}, nil
 }
 
+// Note: Telegram only allows editing messages sent by the bot within the last 48 hours.
+func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
+	payload := map[string]any{
+		"chat_id":    target.ChatID,
+		"message_id": target.ID,
+		"text":       req.Text,
+	}
+
+	tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &hermes.SentMessage{
+		ID:       strconv.Itoa(tgResp.Result.MessageID),
+		Platform: p.Name(),
+		ChatID:   target.ChatID,
+	}, nil
+}
+
 func (p *Poller) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
 	// Handle simple text
 	if len(req.Attachments) == 0 {
