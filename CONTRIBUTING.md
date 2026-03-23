@@ -9,7 +9,7 @@ Hermes is designed to be a clean, platform-agnostic **Interface Layer** for chat
 3. **Graceful Degradation:** If a platform doesn't support a feature (e.g., Telegram doesn't support a specific audio format), the provider should handle it gracefully or return a clear, wrapped error, rather than panicking.
 
 ## Development Setup
-1. Ensure you have Go 1.25 or later installed.
+1. Ensure you have Go 1.26 or later installed.
 2. Fork the repository and clone it locally.
 3. Run `go mod tidy` to ensure dependencies are synced.
 
