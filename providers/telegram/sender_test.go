@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/gargalloeric/hermes"
 )
@@ -154,48 +155,51 @@ func TestSendMessage_Routing(t *testing.T) {
 func TestListen_Polling(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := NewPoller("fake-token")
+		p.backoff = 5 * time.Second
 
 		var wg sync.WaitGroup
-
 		pollCount := 0
+
 		p.client.Transport = &mockTransport{
 			roundTripFunc: func(req *http.Request) (*http.Response, error) {
 				pollCount++
-
 				if pollCount == 1 {
-					// Return a message on the first poll
-					json := `{"ok": true, "result": [{"update_id": 100, "message": {"message_id": 1, "text": "poll test"}}]}`
+					// Return 1 message immediately
+					json := `{"ok": true, "result": [{"update_id": 100, "message": {"text": "hi"}}]}`
 					return &http.Response{
-						StatusCode: http.StatusOK,
+						StatusCode: 200,
 						Body:       io.NopCloser(strings.NewReader(json)),
 					}, nil
 				}
-
+				// Subsequent calls block to simulate long polling
 				<-req.Context().Done()
 				return nil, req.Context().Err()
 			},
 		}
 
 		out := make(chan *hermes.Message, 1)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			_ = p.Listen(ctx, out)
-		})
+		}()
 
+		// synctest.Wait() will:
+		// 1. Run the first poll.
+		// 2. See the message is sent.
+		// 3. See the Listen loop hit timer.Reset(0) and loop again.
+		// 4. See the second poll block in the mockTransport.
+		// 5. Unblock the test.
 		synctest.Wait()
 
-		select {
-		case msg := <-out:
-			if msg.Text != "poll test" {
-				t.Errorf("expected 'poll test', got %s", msg.Text)
-			}
-		default:
-			t.Fatal("no message received from poller")
+		msg := <-out
+		if msg.Text != "hi" {
+			t.Errorf("expected hi, got %s", msg.Text)
 		}
 
 		cancel()
-
 		wg.Wait()
 	})
 }
