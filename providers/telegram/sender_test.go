@@ -203,3 +203,56 @@ func TestListen_Polling(t *testing.T) {
 		wg.Wait()
 	})
 }
+
+func TestSendMessage_RateLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := NewPoller("fake-token")
+
+		attempts := 0
+		p.client.Transport = &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				attempts++
+				if attempts == 1 {
+					// First attempt: Simulate Telegram rate limit (5 seconds)
+					jsonPayload := `{"ok": false, "error_code": 429, "description": "Too Many Requests", "parameters": {"retry_after": 5}}`
+					return &http.Response{
+						StatusCode: http.StatusTooManyRequests,
+						Body:       io.NopCloser(strings.NewReader(jsonPayload)),
+						Header:     make(http.Header),
+					}, nil
+				}
+
+				// Second attempt: Success
+				jsonPayload := `{"ok": true, "result": {"message_id": 999}}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(jsonPayload)),
+					Header:     make(http.Header),
+				}, nil
+			},
+		}
+
+		// Capture the synthetic time before we call the method
+		start := time.Now()
+
+		req := hermes.MessageRequest{Text: "Testing smart retries"}
+		res, err := p.SendMessage(t.Context(), req)
+
+		if err != nil {
+			t.Fatalf("expected success after retry, got error: %v", err)
+		}
+
+		if res.ID != "999" {
+			t.Errorf("expected message ID 999, got %s", res.ID)
+		}
+
+		if attempts != 2 {
+			t.Errorf("expected exactly 2 API calls, got %d", attempts)
+		}
+
+		elapsed := time.Since(start)
+		if elapsed < 5*time.Second {
+			t.Errorf("expected synthetic time to advance by at least 5s, got %v", elapsed)
+		}
+	})
+}
