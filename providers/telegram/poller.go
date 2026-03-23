@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,15 +45,22 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 	if !timer.Stop() {
 		<-timer.C
 	}
-
 	defer timer.Stop()
+
+	failCount := 0
 
 	for {
 		updates, err := p.getUpdates(ctx)
+
+		var nextWait time.Duration
+
 		if err != nil {
-			// On error wait a full backoff before retrying.
-			timer.Reset(p.backoff)
+			// On error calculate the backoff and wait.
+			failCount++
+			nextWait = p.calculateBackoff(err, failCount)
 		} else if len(updates) > 0 {
+			failCount = 0
+
 			for _, upd := range updates {
 				if msg := p.mapToHermes(upd); msg != nil {
 					out <- msg
@@ -60,11 +69,13 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 			}
 			// If we got messages, there's likely more.
 			// Reset to 0 to poll again immediatly without sleeping.
-			timer.Reset(0)
+			nextWait = 0
 		} else {
 			// No messages, wait normally.
-			timer.Reset(p.backoff)
+			nextWait = p.backoff
 		}
+
+		timer.Reset(nextWait)
 
 		select {
 		case <-ctx.Done():
@@ -74,6 +85,22 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 			continue
 		}
 	}
+}
+
+func (p *Poller) calculateBackoff(err error, fails int) time.Duration {
+	apiError, ok := errors.AsType[*APIError](err)
+	// Telegram explicitly tells us to wait (e.g. 429 Too Many Requests)
+	if ok && apiError.RetryAfter > 0 {
+		return apiError.RetryAfter
+	}
+
+	// Exponential backoff for other errors: 2s, 4s, 8s... capped at 1m
+	exp := math.Pow(2, float64(fails))
+	d := time.Duration(exp) * time.Second
+	if d > time.Minute {
+		return time.Minute
+	}
+	return d
 }
 
 func (p *Poller) getUpdates(ctx context.Context) ([]tgUpdate, error) {
@@ -97,6 +124,18 @@ func (p *Poller) getUpdates(ctx context.Context) ([]tgUpdate, error) {
 	var tgResp tgResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tgResp); err != nil {
 		return nil, err
+	}
+
+	if !tgResp.Ok {
+		retry := 0
+		if tgResp.Parameters != nil {
+			retry = tgResp.Parameters.RetryAfter
+		}
+		return nil, &APIError{
+			Code:       tgResp.ErrorCode,
+			Message:    tgResp.Description,
+			RetryAfter: time.Duration(retry) * time.Second,
+		}
 	}
 
 	return tgResp.Result, nil
