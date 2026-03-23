@@ -1,13 +1,25 @@
 package telegram
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 
 	"github.com/gargalloeric/hermes"
 )
+
+type mockTransport struct {
+	roundTripFunc func(*http.Request) (*http.Response, error)
+}
+
+func (mt *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return mt.roundTripFunc(req)
+}
 
 func TestSendMessage_Network(t *testing.T) {
 	tests := []struct {
@@ -137,4 +149,53 @@ func TestSendMessage_Routing(t *testing.T) {
 			p.SendMessage(t.Context(), tc.req)
 		})
 	}
+}
+
+func TestListen_Polling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := NewPoller("fake-token")
+
+		var wg sync.WaitGroup
+
+		pollCount := 0
+		p.client.Transport = &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				pollCount++
+
+				if pollCount == 1 {
+					// Return a message on the first poll
+					json := `{"ok": true, "result": [{"update_id": 100, "message": {"message_id": 1, "text": "poll test"}}]}`
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(json)),
+					}, nil
+				}
+
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			},
+		}
+
+		out := make(chan *hermes.Message, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+
+		wg.Go(func() {
+			_ = p.Listen(ctx, out)
+		})
+
+		synctest.Wait()
+
+		select {
+		case msg := <-out:
+			if msg.Text != "poll test" {
+				t.Errorf("expected 'poll test', got %s", msg.Text)
+			}
+		default:
+			t.Fatal("no message received from poller")
+		}
+
+		cancel()
+
+		wg.Wait()
+	})
 }
