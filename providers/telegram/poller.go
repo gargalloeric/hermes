@@ -19,6 +19,7 @@ type Poller struct {
 	client  *http.Client
 	offset  int
 	baseURL string
+	backoff time.Duration
 }
 
 func NewPoller(token string) *Poller {
@@ -28,6 +29,7 @@ func NewPoller(token string) *Poller {
 			Timeout: 70 * time.Second, // Must be longer than the Telegram timeout
 		},
 		baseURL: "https://api.telegram.org/bot%s/%s",
+		backoff: 1 * time.Second,
 	}
 }
 
@@ -36,23 +38,40 @@ func (p *Poller) Name() string {
 }
 
 func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			updates, err := p.getUpdates(ctx)
-			if err != nil {
-				time.Sleep(2 * time.Second) // Network hiccup, back off safely
-				continue
-			}
+	timer := time.NewTimer(p.backoff)
+	// Drain the timer channel before we poll the first update.
+	if !timer.Stop() {
+		<-timer.C
+	}
 
+	defer timer.Stop()
+
+	for {
+		updates, err := p.getUpdates(ctx)
+		if err != nil {
+			// On error wait a full backoff before retrying.
+			timer.Reset(p.backoff)
+		} else if len(updates) > 0 {
 			for _, upd := range updates {
 				if msg := p.mapToHermes(upd); msg != nil {
 					out <- msg
 				}
 				p.offset = upd.UpdateID + 1
 			}
+			// If we got messages, there's likely more.
+			// Reset to 0 to poll again immediatly without sleeping.
+			timer.Reset(0)
+		} else {
+			// No messages, wait normally.
+			timer.Reset(p.backoff)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			// Timer fired, continue to next iteration.
+			continue
 		}
 	}
 }
