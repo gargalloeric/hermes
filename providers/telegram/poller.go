@@ -16,11 +16,12 @@ import (
 )
 
 type Poller struct {
-	token   string
-	client  *http.Client
-	offset  int
-	baseURL string
-	backoff time.Duration
+	token      string
+	client     *http.Client
+	offset     int
+	baseURL    string
+	backoff    time.Duration
+	maxRetries int
 }
 
 func NewPoller(token string) *Poller {
@@ -29,8 +30,9 @@ func NewPoller(token string) *Poller {
 		client: &http.Client{
 			Timeout: 70 * time.Second, // Must be longer than the Telegram timeout
 		},
-		baseURL: "https://api.telegram.org/bot%s/%s",
-		backoff: 1 * time.Second,
+		baseURL:    "https://api.telegram.org/bot%s/%s",
+		backoff:    1 * time.Second,
+		maxRetries: 2,
 	}
 }
 
@@ -40,10 +42,6 @@ func (p *Poller) Name() string {
 
 func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 	timer := time.NewTimer(p.backoff)
-	// Drain the timer channel before we poll the first update.
-	if !timer.Stop() {
-		<-timer.C
-	}
 	defer timer.Stop()
 
 	failCount := 0
@@ -57,21 +55,20 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 			// On error calculate the backoff and wait.
 			failCount++
 			nextWait = p.calculateBackoff(err, failCount)
-		} else if len(updates) > 0 {
+		} else {
 			failCount = 0
-
 			for _, upd := range updates {
 				if msg := p.mapToHermes(upd); msg != nil {
 					out <- msg
 				}
 				p.offset = upd.UpdateID + 1
 			}
-			// If we got messages, there's likely more.
-			// Reset to 0 to poll again immediatly without sleeping.
-			nextWait = 0
-		} else {
-			// No messages, wait normally.
-			nextWait = p.backoff
+
+			// If we got messages, poll again immediately (0 delay).
+			// If no messages, use the standard backoff.
+			if len(updates) == 0 {
+				nextWait = p.backoff
+			}
 		}
 
 		timer.Reset(nextWait)
@@ -228,13 +225,19 @@ func (p *Poller) mapSystemEvents(tm *tgMessage, hm *hermes.Message) {
 func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildPayload(req)
 
-	for range 2 {
+	for range p.maxRetries {
 		tgResp, err := p.postToTelegram(ctx, endpoint, payload)
 		if err != nil {
 			tgError, ok := errors.AsType[*telegramError](err)
 			if ok && tgError.RetryAfter > 0 {
-				time.Sleep(tgError.RetryAfter)
-				continue
+				timer := time.NewTimer(tgError.RetryAfter)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+					continue
+				}
 			}
 			return nil, err
 		}
@@ -246,7 +249,7 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*h
 		}, nil
 	}
 
-	return nil, fmt.Errorf("failed to send message after 2 retries")
+	return nil, fmt.Errorf("failed to send message after %d retries", p.maxRetries)
 }
 
 // Note: Telegram only allows editing messages sent by the bot within the last 48 hours.
@@ -257,13 +260,19 @@ func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, re
 		"text":       req.Text,
 	}
 
-	for range 2 {
+	for range p.maxRetries {
 		tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
 		if err != nil {
 			tgError, ok := errors.AsType[*telegramError](err)
 			if ok && tgError.RetryAfter > 0 {
-				time.Sleep(tgError.RetryAfter)
-				continue
+				timer := time.NewTimer(tgError.RetryAfter)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+					continue
+				}
 			}
 			return nil, err
 		}
@@ -275,7 +284,7 @@ func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, re
 		}, nil
 	}
 
-	return nil, fmt.Errorf("failed to edit the message after 2 retries")
+	return nil, fmt.Errorf("failed to edit the message after %d retries", p.maxRetries)
 }
 
 func (p *Poller) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
