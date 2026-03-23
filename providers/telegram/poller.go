@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -88,10 +87,10 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 }
 
 func (p *Poller) calculateBackoff(err error, fails int) time.Duration {
-	apiError, ok := errors.AsType[*APIError](err)
+	tgError, ok := errors.AsType[*telegramError](err)
 	// Telegram explicitly tells us to wait (e.g. 429 Too Many Requests)
-	if ok && apiError.RetryAfter > 0 {
-		return apiError.RetryAfter
+	if ok && tgError.RetryAfter > 0 {
+		return tgError.RetryAfter
 	}
 
 	// Exponential backoff for other errors: 2s, 4s, 8s... capped at 1m
@@ -131,7 +130,7 @@ func (p *Poller) getUpdates(ctx context.Context) ([]tgUpdate, error) {
 		if tgResp.Parameters != nil {
 			retry = tgResp.Parameters.RetryAfter
 		}
-		return nil, &APIError{
+		return nil, &telegramError{
 			Code:       tgResp.ErrorCode,
 			Message:    tgResp.Description,
 			RetryAfter: time.Duration(retry) * time.Second,
@@ -229,16 +228,25 @@ func (p *Poller) mapSystemEvents(tm *tgMessage, hm *hermes.Message) {
 func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildPayload(req)
 
-	tgResp, err := p.postToTelegram(ctx, endpoint, payload)
-	if err != nil {
-		return nil, err
+	for range 2 {
+		tgResp, err := p.postToTelegram(ctx, endpoint, payload)
+		if err != nil {
+			tgError, ok := errors.AsType[*telegramError](err)
+			if ok && tgError.RetryAfter > 0 {
+				time.Sleep(tgError.RetryAfter)
+				continue
+			}
+			return nil, err
+		}
+
+		return &hermes.SentMessage{
+			ID:       strconv.Itoa(tgResp.Result.MessageID),
+			Platform: p.Name(),
+			ChatID:   req.RecipientID,
+		}, nil
 	}
 
-	return &hermes.SentMessage{
-		ID:       strconv.Itoa(tgResp.Result.MessageID),
-		Platform: p.Name(),
-		ChatID:   req.RecipientID,
-	}, nil
+	return nil, fmt.Errorf("failed to send message after 2 retries")
 }
 
 // Note: Telegram only allows editing messages sent by the bot within the last 48 hours.
@@ -249,16 +257,25 @@ func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, re
 		"text":       req.Text,
 	}
 
-	tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
-	if err != nil {
-		return nil, err
+	for range 2 {
+		tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
+		if err != nil {
+			tgError, ok := errors.AsType[*telegramError](err)
+			if ok && tgError.RetryAfter > 0 {
+				time.Sleep(tgError.RetryAfter)
+				continue
+			}
+			return nil, err
+		}
+
+		return &hermes.SentMessage{
+			ID:       strconv.Itoa(tgResp.Result.MessageID),
+			Platform: p.Name(),
+			ChatID:   target.ChatID,
+		}, nil
 	}
 
-	return &hermes.SentMessage{
-		ID:       strconv.Itoa(tgResp.Result.MessageID),
-		Platform: p.Name(),
-		ChatID:   target.ChatID,
-	}, nil
+	return nil, fmt.Errorf("failed to edit the message after 2 retries")
 }
 
 func (p *Poller) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
@@ -377,17 +394,22 @@ func (p *Poller) postToTelegram(ctx context.Context, method string, payload any)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("failed reading telegram response body with status code %d: %w", resp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("telegram API error %d: %s", resp.StatusCode, string(respBody))
-	}
-
 	var tgResp tgSendResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tgResp); err != nil {
 		return nil, fmt.Errorf("failed to decode telegram response: %w", err)
+	}
+
+	if !tgResp.Ok {
+		retry := 0
+		if tgResp.Parameters != nil {
+			retry = tgResp.Parameters.RetryAfter
+		}
+
+		return nil, &telegramError{
+			Code:       tgResp.ErrorCode,
+			Message:    tgResp.Description,
+			RetryAfter: time.Duration(retry) * time.Second,
+		}
 	}
 
 	return &tgResp, nil

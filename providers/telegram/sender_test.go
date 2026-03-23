@@ -45,7 +45,7 @@ func TestSendMessage_Network(t *testing.T) {
 		{
 			name:           "Telegram API Error 400",
 			status:         http.StatusBadRequest,
-			serverResponse: `{"ok": false, "description": "Bad Request: chat not found"}`,
+			serverResponse: `{"ok": false, "error_code": 400, "description": "Bad Request: chat not found"}`,
 			validate: func(t *testing.T, sm *hermes.SentMessage, err error) {
 				if err == nil {
 					t.Fatal("expected an error but got nil")

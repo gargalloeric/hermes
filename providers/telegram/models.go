@@ -77,12 +77,12 @@ type tgResponseParams struct {
 	RetryAfter int `json:"retry_after,omitempty"`
 }
 
-type APIError struct {
+type telegramError struct {
 	Code       int
 	Message    string
 	RetryAfter time.Duration
 }
 
-func (e *APIError) Error() string {
+func (e *telegramError) Error() string {
 	return fmt.Sprintf("telegram api error (%d): %s", e.Code, e.Message)
 }
