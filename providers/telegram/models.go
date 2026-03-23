@@ -1,9 +1,17 @@
 package telegram
 
+import (
+	"fmt"
+	"time"
+)
+
 // tgResponse is the envelope for all Telegram API responses
 type tgResponse struct {
-	Ok     bool       `json:"ok"`
-	Result []tgUpdate `json:"result"`
+	Ok          bool              `json:"ok"`
+	Result      []tgUpdate        `json:"result,omitempty"`
+	Description string            `json:"description,omitempty"`
+	ErrorCode   int               `json:"error_code,omitempty"`
+	Parameters  *tgResponseParams `json:"parameters,omitempty"`
 }
 
 type tgUpdate struct {
@@ -58,6 +66,23 @@ type tgLocation struct {
 }
 
 type tgSendResponse struct {
-	Ok     bool      `json:"ok"`
-	Result tgMessage `json:"result"`
+	Ok          bool              `json:"ok"`
+	Result      *tgMessage        `json:"result,omitempty"`
+	Description string            `json:"description,omitempty"`
+	ErrorCode   int               `json:"error_code,omitempty"`
+	Parameters  *tgResponseParams `json:"parameters,omitempty"`
+}
+
+type tgResponseParams struct {
+	RetryAfter int `json:"retry_after,omitempty"`
+}
+
+type telegramError struct {
+	Code       int
+	Message    string
+	RetryAfter time.Duration
+}
+
+func (e *telegramError) Error() string {
+	return fmt.Sprintf("telegram api error (%d): %s", e.Code, e.Message)
 }
