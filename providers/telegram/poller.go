@@ -83,6 +83,94 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 	}
 }
 
+func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
+	endpoint, payload := p.buildPayload(req)
+
+	for range p.maxRetries {
+		tgResp, err := p.postToTelegram(ctx, endpoint, payload)
+		if err != nil {
+			tgError, ok := errors.AsType[*telegramError](err)
+			if ok && tgError.RetryAfter > 0 {
+				timer := time.NewTimer(tgError.RetryAfter)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+					continue
+				}
+			}
+			return nil, err
+		}
+
+		return &hermes.SentMessage{
+			ID:       strconv.Itoa(tgResp.Result.MessageID),
+			Platform: p.Name(),
+			ChatID:   req.RecipientID,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("failed to send message after %d retries", p.maxRetries)
+}
+
+// Note: Telegram only allows editing messages sent by the bot within the last 48 hours.
+func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
+	payload := map[string]any{
+		"chat_id":    target.ChatID,
+		"message_id": target.ID,
+		"text":       req.Text,
+	}
+
+	for range p.maxRetries {
+		tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
+		if err != nil {
+			tgError, ok := errors.AsType[*telegramError](err)
+			if ok && tgError.RetryAfter > 0 {
+				timer := time.NewTimer(tgError.RetryAfter)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+					continue
+				}
+			}
+			return nil, err
+		}
+
+		return &hermes.SentMessage{
+			ID:       strconv.Itoa(tgResp.Result.MessageID),
+			Platform: p.Name(),
+			ChatID:   target.ChatID,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("failed to edit the message after %d retries", p.maxRetries)
+}
+
+func (p *Poller) ActionTimeout() time.Duration {
+	return 5 * time.Second
+}
+
+func (p *Poller) SendAction(ctx context.Context, req hermes.ActionRequest) error {
+	payload := map[string]any{
+		"chat_id": req.RecipientID,
+		"action":  mapAction(req.Action),
+	}
+
+	_, err := p.postToTelegram(ctx, "sendChatAction", payload)
+	return err
+}
+
+func mapAction(action hermes.ActionType) string {
+	switch action {
+	case hermes.ActionTyping:
+		return "typing"
+	default:
+		return "typing" // Fallback for non supported actions
+	}
+}
+
 func (p *Poller) calculateBackoff(err error, fails int) time.Duration {
 	tgError, ok := errors.AsType[*telegramError](err)
 	// Telegram explicitly tells us to wait (e.g. 429 Too Many Requests)
@@ -220,71 +308,6 @@ func (p *Poller) mapSystemEvents(tm *tgMessage, hm *hermes.Message) {
 			},
 		}
 	}
-}
-
-func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	endpoint, payload := p.buildPayload(req)
-
-	for range p.maxRetries {
-		tgResp, err := p.postToTelegram(ctx, endpoint, payload)
-		if err != nil {
-			tgError, ok := errors.AsType[*telegramError](err)
-			if ok && tgError.RetryAfter > 0 {
-				timer := time.NewTimer(tgError.RetryAfter)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				case <-timer.C:
-					continue
-				}
-			}
-			return nil, err
-		}
-
-		return &hermes.SentMessage{
-			ID:       strconv.Itoa(tgResp.Result.MessageID),
-			Platform: p.Name(),
-			ChatID:   req.RecipientID,
-		}, nil
-	}
-
-	return nil, fmt.Errorf("failed to send message after %d retries", p.maxRetries)
-}
-
-// Note: Telegram only allows editing messages sent by the bot within the last 48 hours.
-func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	payload := map[string]any{
-		"chat_id":    target.ChatID,
-		"message_id": target.ID,
-		"text":       req.Text,
-	}
-
-	for range p.maxRetries {
-		tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
-		if err != nil {
-			tgError, ok := errors.AsType[*telegramError](err)
-			if ok && tgError.RetryAfter > 0 {
-				timer := time.NewTimer(tgError.RetryAfter)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				case <-timer.C:
-					continue
-				}
-			}
-			return nil, err
-		}
-
-		return &hermes.SentMessage{
-			ID:       strconv.Itoa(tgResp.Result.MessageID),
-			Platform: p.Name(),
-			ChatID:   target.ChatID,
-		}, nil
-	}
-
-	return nil, fmt.Errorf("failed to edit the message after %d retries", p.maxRetries)
 }
 
 func (p *Poller) buildPayload(req hermes.MessageRequest) (string, map[string]any) {

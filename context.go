@@ -3,6 +3,7 @@ package hermes
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Context represents the environment in which a message is handled.
@@ -73,6 +74,39 @@ func (c *Context) Edit(target *SentMessage, text string) (*SentMessage, error) {
 	}
 
 	return c.provider.EditMessage(c.ctx, target, req)
+}
+
+// Action triggers a platform-specific activity indicator (typing, uploading, etc.).
+// It returns a function that, when called, stops the activity.
+func (c *Context) Action(a ActionType) func() {
+	req := ActionRequest{
+		RecipientID: c.Message.Sender.ID,
+		Action:      a,
+	}
+	c.provider.SendAction(c.ctx, req)
+
+	timeout := c.provider.ActionTimeout()
+
+	if timeout <= 0 {
+		return func() {}
+	}
+
+	actionCtx, cancel := context.WithCancel(c.ctx)
+	go func() {
+		ticker := time.NewTicker(timeout * 8 / 10)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-actionCtx.Done():
+				return
+			case <-ticker.C:
+				c.provider.SendAction(actionCtx, req)
+			}
+		}
+	}()
+
+	return cancel
 }
 
 // Platform returns the name of the provider that triggered this context.

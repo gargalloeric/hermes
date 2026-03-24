@@ -1,6 +1,9 @@
 package hermes
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // MessageRequest is the payload Hermes sends down to the provider to reply.
 type MessageRequest struct {
@@ -8,6 +11,12 @@ type MessageRequest struct {
 	Text        string
 	Attachments []Attachment
 	ReplyToID   string
+}
+
+// ActionRequest is a payload Hermes sends down to the provider to activate a UI action.
+type ActionRequest struct {
+	RecipientID string
+	Action      ActionType
 }
 
 // Provider defines how Hermes communicates with a chat platform.
@@ -22,4 +31,9 @@ type Provider interface {
 	// EditMessage modifies an existing message on the platform.
 	// The target parameter must contain the valid ID and ChatID of the message to be changed.
 	EditMessage(ctx context.Context, target *SentMessage, req MessageRequest) (*SentMessage, error)
+	// ActionTimeout returns how long an action lasts on this platform.
+	// If it returns 0, the action is considered "one-shot" or permanent.
+	ActionTimeout() time.Duration
+	// SendAction sends a single activity burst.
+	SendAction(ctx context.Context, req ActionRequest) error
 }
