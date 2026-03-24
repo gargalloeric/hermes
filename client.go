@@ -81,8 +81,13 @@ func (c *Client) dispatch(ctx context.Context, msg *Message) {
 
 	for _, r := range c.routes {
 		if r.matcher(msg) {
-			hermesCtx := NewContext(ctx, source, msg)
-			go r.handler(hermesCtx)
+			handlerCtx, cancel := context.WithCancel(ctx)
+			hermesCtx := NewContext(handlerCtx, source, msg)
+
+			go func() {
+				defer cancel()
+				r.handler(hermesCtx)
+			}()
 
 			return
 		}
