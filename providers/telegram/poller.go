@@ -152,10 +152,10 @@ func (p *Poller) ActionTimeout() time.Duration {
 	return 5 * time.Second
 }
 
-func (p *Poller) SendAction(ctx context.Context, chatID string, action hermes.ActionType) error {
+func (p *Poller) SendAction(ctx context.Context, req hermes.ActionRequest) error {
 	payload := map[string]any{
-		"chat_id": chatID,
-		"action":  mapAction(action),
+		"chat_id": req.RecipientID,
+		"action":  mapAction(req.Action),
 	}
 
 	_, err := p.postToTelegram(ctx, "sendChatAction", payload)

@@ -79,7 +79,11 @@ func (c *Context) Edit(target *SentMessage, text string) (*SentMessage, error) {
 // Action triggers a platform-specific activity indicator (typing, uploading, etc.).
 // It returns a function that, when called, stops the activity.
 func (c *Context) Action(a ActionType) func() {
-	c.provider.SendAction(c.ctx, c.Message.Sender.ID, a)
+	req := ActionRequest{
+		RecipientID: c.Message.Sender.ID,
+		Action:      a,
+	}
+	c.provider.SendAction(c.ctx, req)
 
 	timeout := c.provider.ActionTimeout()
 
@@ -97,7 +101,7 @@ func (c *Context) Action(a ActionType) func() {
 			case <-actionCtx.Done():
 				return
 			case <-ticker.C:
-				c.provider.SendAction(actionCtx, c.Message.Sender.ID, a)
+				c.provider.SendAction(actionCtx, req)
 			}
 		}
 	}()

@@ -13,6 +13,12 @@ type MessageRequest struct {
 	ReplyToID   string
 }
 
+// ActionRequest is a payload Hermes sends down to the provider to activate a UI action.
+type ActionRequest struct {
+	RecipientID string
+	Action      ActionType
+}
+
 // Provider defines how Hermes communicates with a chat platform.
 type Provider interface {
 	// Name returns the platform identifier (e.g., "telegram")
@@ -29,5 +35,5 @@ type Provider interface {
 	// If it returns 0, the action is considered "one-shot" or permanent.
 	ActionTimeout() time.Duration
 	// SendAction sends a single activity burst.
-	SendAction(ctx context.Context, chatID string, action ActionType) error
+	SendAction(ctx context.Context, req ActionRequest) error
 }
