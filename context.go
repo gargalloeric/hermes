@@ -74,3 +74,13 @@ func (c *Context) Edit(target *SentMessage, text string) (*SentMessage, error) {
 
 	return c.provider.EditMessage(c.ctx, target, req)
 }
+
+// Platform returns the name of the provider that triggered this context.
+func (c *Context) Platform() string {
+	return c.provider.Name()
+}
+
+// Done returns a channel that's closed when the handling context is cancelled.
+func (c *Context) Done() <-chan struct{} {
+	return c.ctx.Done()
+}
