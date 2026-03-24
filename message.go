@@ -32,6 +32,13 @@ const (
 	EventMessageEdit EventType = "message_edited"
 )
 
+// ActionType defines the specific action to show in the platform UI.
+type ActionType string
+
+const (
+	ActionTyping ActionType = "typing"
+)
+
 // User represents a participant in a chat on any platform.
 type User struct {
 	ID       string
