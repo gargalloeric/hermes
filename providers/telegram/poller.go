@@ -89,7 +89,7 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*h
 	for range p.maxRetries {
 		tgResp, err := p.postToTelegram(ctx, endpoint, payload)
 		if err != nil {
-			tgError, ok := errors.AsType[*telegramError](err)
+			tgError, ok := errors.AsType[*tgError](err)
 			if ok && tgError.RetryAfter > 0 {
 				timer := time.NewTimer(tgError.RetryAfter)
 				select {
@@ -124,7 +124,7 @@ func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, re
 	for range p.maxRetries {
 		tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
 		if err != nil {
-			tgError, ok := errors.AsType[*telegramError](err)
+			tgError, ok := errors.AsType[*tgError](err)
 			if ok && tgError.RetryAfter > 0 {
 				timer := time.NewTimer(tgError.RetryAfter)
 				select {
@@ -172,7 +172,7 @@ func mapAction(action hermes.ActionType) string {
 }
 
 func (p *Poller) calculateBackoff(err error, fails int) time.Duration {
-	tgError, ok := errors.AsType[*telegramError](err)
+	tgError, ok := errors.AsType[*tgError](err)
 	// Telegram explicitly tells us to wait (e.g. 429 Too Many Requests)
 	if ok && tgError.RetryAfter > 0 {
 		return tgError.RetryAfter
@@ -215,7 +215,7 @@ func (p *Poller) getUpdates(ctx context.Context) ([]tgUpdate, error) {
 		if tgResp.Parameters != nil {
 			retry = tgResp.Parameters.RetryAfter
 		}
-		return nil, &telegramError{
+		return nil, &tgError{
 			Code:       tgResp.ErrorCode,
 			Message:    tgResp.Description,
 			RetryAfter: time.Duration(retry) * time.Second,
@@ -437,7 +437,7 @@ func (p *Poller) postToTelegram(ctx context.Context, method string, payload any)
 			retry = tgResp.Parameters.RetryAfter
 		}
 
-		return nil, &telegramError{
+		return nil, &tgError{
 			Code:       tgResp.ErrorCode,
 			Message:    tgResp.Description,
 			RetryAfter: time.Duration(retry) * time.Second,
