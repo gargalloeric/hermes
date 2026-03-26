@@ -19,13 +19,16 @@ type route struct {
 // Client is the core Hermes engine. It manages providers and routes incoming
 // messages to the registered handlers.
 type Client struct {
-	providers []Provider
-	routes    []route
+	providers  []Provider
+	routes     []route
+	bufferSize int
 }
 
 // New initializes the client with functional options.
 func New(opts ...ClientOption) *Client {
-	c := &Client{}
+	c := &Client{
+		bufferSize: 100,
+	}
 
 	for _, opt := range opts {
 		opt(c)
@@ -45,7 +48,7 @@ func (c *Client) On(m Matcher, h Handler) {
 // Start begins polling for updates from the provider. This is a blocking call.
 func (c *Client) Start(ctx context.Context) error {
 	// A buffered channel to prevent slow dispatching from blocking providers
-	messageChan := make(chan *Message, 100)
+	messageChan := make(chan *Message, c.bufferSize)
 
 	for _, p := range c.providers {
 		go func(prov Provider) {
