@@ -38,45 +38,55 @@ func (p *Provider) Name() string {
 }
 
 func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	payload := map[string]any{
-		"content": req.Text,
-	}
+	endpoint, payload := p.buildPayload(req)
 
-	data, err := json.Marshal(payload)
+	dsResp, err := p.doDiscordRequest(ctx, http.MethodPost, endpoint, payload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal discord payload: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/channels/%s/messages", baseURL, req.RecipientID)
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(data))
-	if err != nil {
-		return nil, fmt.Errorf("failed to construct discord request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", p.token)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", hermes.UserAgent())
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("discord API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if err := p.checkResponse(resp); err != nil {
 		return nil, err
 	}
 
-	var dsResp dsMessage
-	if err := json.NewDecoder(resp.Body).Decode(&dsResp); err != nil {
-		return nil, fmt.Errorf("failed to decode discord responde: %w", err)
+	return &hermes.SentMessage{
+		ID:       dsResp.ID,
+		Platform: p.Name(),
+		ChatID:   dsResp.ChannelID,
+	}, nil
+}
+
+func (p *Provider) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
+	endpoint, payload := p.buildEditPayload(target, req)
+
+	dsResp, err := p.doDiscordRequest(ctx, http.MethodPatch, endpoint, payload)
+	if err != nil {
+		return nil, err
 	}
 
 	return &hermes.SentMessage{
-		ID:     dsResp.ID,
-		ChatID: dsResp.ChannelID,
+		ID:       dsResp.ID,
+		Platform: p.Name(),
+		ChatID:   dsResp.ChannelID,
 	}, nil
+}
+
+func (p *Provider) SendAction(ctx context.Context, req hermes.ActionRequest) error {
+	action := p.mapAction(req.Action)
+	endpoint := fmt.Sprintf("/channels/%s/%s", req.RecipientID, action)
+
+	// Typing indicator doesn't need a body, so we pass nil.
+	_, err := p.doDiscordRequest(ctx, http.MethodPost, endpoint, nil)
+	return err
+}
+
+func (p *Provider) ActionTimeout() time.Duration {
+	return 10 * time.Second
+}
+
+func (p *Provider) mapAction(action hermes.ActionType) string {
+	switch action {
+	case hermes.ActionTyping:
+		return "typing"
+	default:
+		return "typing"
+	}
 }
 
 func (p *Provider) checkResponse(resp *http.Response) error {
@@ -92,4 +102,109 @@ func (p *Provider) checkResponse(resp *http.Response) error {
 	dsErr.Status = resp.StatusCode
 
 	return &dsErr
+}
+
+// buildPayload constructs the correct Discord endpoint and JSON payload.
+func (p *Provider) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
+	endpoint := fmt.Sprintf("/channels/%s/messages", req.RecipientID)
+	payload := make(map[string]any)
+
+	if req.Text != "" {
+		payload["content"] = req.Text
+	}
+
+	if req.ReplyToID != "" {
+		payload["message_reference"] = map[string]string{
+			"message_id": req.ReplyToID,
+		}
+	}
+
+	if len(req.Attachments) > 0 {
+		payload["embeds"] = p.mapAttachmentsToEmbeds(req.Attachments)
+	}
+
+	return endpoint, payload
+}
+
+func (p *Provider) buildEditPayload(target *hermes.SentMessage, req hermes.MessageRequest) (string, map[string]any) {
+	endpoint := fmt.Sprintf("/channels/%s/messages/%s", target.ChatID, target.ID)
+	payload := map[string]any{
+		"content": req.Text,
+	}
+
+	// TODO: Discord allows to edit embeds also.
+	return endpoint, payload
+}
+
+func (p *Provider) mapAttachmentsToEmbeds(atts []hermes.Attachment) []map[string]any {
+	embeds := make([]map[string]any, 0, len(atts))
+
+	for _, att := range atts {
+		embed := map[string]any{"url": att.URL}
+
+		// If it's an image, Discord needs it in the specific "image" object
+		if att.Type == hermes.AttachmentImage {
+			embed["image"] = map[string]string{"url": att.URL}
+		}
+
+		embeds = append(embeds, embed)
+	}
+
+	return embeds
+}
+
+func (p *Provider) doDiscordRequest(ctx context.Context, method, endpoint string, payload any) (*dsMessage, error) {
+	url := fmt.Sprintf("%s%s", baseURL, endpoint)
+
+	req, err := p.newRequest(ctx, method, url, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if err := p.checkResponse(resp); err != nil {
+		return nil, err
+	}
+
+	// Discord actions (e.g. typing) don't return a body.
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+
+	var dsResp dsMessage
+	if err := json.NewDecoder(resp.Body).Decode(&dsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode discord response: %w", err)
+	}
+
+	return &dsResp, nil
+}
+
+func (p *Provider) newRequest(ctx context.Context, method, url string, payload any) (*http.Request, error) {
+	var body []byte
+	var err error
+
+	if payload != nil {
+		body, err = json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal discord payload: %w", err)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discord request: %w", err)
+	}
+
+	req.Header.Set("Authorization", p.token)
+	req.Header.Set("User-Agent", hermes.UserAgent())
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return req, nil
 }

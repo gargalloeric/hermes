@@ -168,8 +168,9 @@ func (p *Provider) writePayload(ctx context.Context, conn *websocket.Conn, op in
 
 func (p *Provider) mapToHermes(dsMsg dsMessage) *hermes.Message {
 	return &hermes.Message{
-		ID:   dsMsg.ID,
-		Text: dsMsg.Content,
+		ID:     dsMsg.ID,
+		Text:   dsMsg.Content,
+		ChatID: dsMsg.ChannelID,
 		Sender: hermes.User{
 			ID:       dsMsg.Author.ID,
 			Username: dsMsg.Author.Username,
