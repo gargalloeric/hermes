@@ -419,6 +419,7 @@ func (p *Poller) postToTelegram(ctx context.Context, method string, payload any)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", hermes.UserAgent())
 
 	resp, err := p.client.Do(req)
 	if err != nil {
