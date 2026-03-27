@@ -53,10 +53,10 @@ type dsUser struct {
 }
 
 type dsAttachment struct {
-	ID       string `json:"id"`
-	Filename string `json:"filename"`
-	URL      string `json:"url"`
-	Size     int    `json:"size"`
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
 }
 
 type dsEmbed struct {
