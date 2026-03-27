@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -167,15 +168,75 @@ func (p *Provider) writePayload(ctx context.Context, conn *websocket.Conn, op in
 }
 
 func (p *Provider) mapToHermes(dsMsg dsMessage) *hermes.Message {
-	return &hermes.Message{
+	m := &hermes.Message{
 		ID:     dsMsg.ID,
 		Text:   dsMsg.Content,
 		ChatID: dsMsg.ChannelID,
 		Sender: hermes.User{
 			ID:       dsMsg.Author.ID,
 			Username: dsMsg.Author.Username,
+			IsBot:    dsMsg.Author.Bot,
 		},
 		Platform: p.Name(),
 		Type:     hermes.TypeText,
+	}
+
+	if len(dsMsg.Attachments) > 0 {
+		m.Attachments = p.mapAttachments(m, dsMsg.Attachments)
+	}
+
+	return m
+}
+
+func (p *Provider) mapAttachments(m *hermes.Message, atts []dsAttachment) []hermes.Attachment {
+	hermesAtts := make([]hermes.Attachment, 0, len(atts))
+
+	for _, att := range atts {
+		resolvedType := p.resolveAttachmentType(att.ContentType, att.Filename)
+
+		hermesAtt := hermes.Attachment{
+			ID:       att.ID,
+			URL:      att.URL,
+			FileName: att.Filename,
+			Type:     resolvedType,
+			MimeType: att.ContentType,
+		}
+
+		if m.Type == hermes.TypeText && resolvedType != hermes.AttachmentFile {
+			m.Type = hermes.MessageType(resolvedType)
+		}
+
+		hermesAtts = append(hermesAtts, hermesAtt)
+	}
+
+	return hermesAtts
+}
+
+func (p *Provider) resolveAttachmentType(contentType, filename string) hermes.AttachmentType {
+	if contentType != "" {
+		if strings.HasPrefix(contentType, "image/") {
+			return hermes.AttachmentImage
+		}
+		if strings.HasPrefix(contentType, "video/") {
+			return hermes.AttachmentVideo
+		}
+		if strings.HasPrefix(contentType, "audio/") {
+			return hermes.AttachmentAudio
+		}
+		return hermes.AttachmentFile
+	}
+
+	lowerName := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lowerName, ".png"), strings.HasSuffix(lowerName, ".jpg"),
+		strings.HasSuffix(lowerName, ".jpeg"), strings.HasSuffix(lowerName, ".webp"),
+		strings.HasSuffix(lowerName, ".gif"):
+		return hermes.AttachmentImage
+	case strings.HasSuffix(lowerName, ".mp4"), strings.HasSuffix(lowerName, ".mov"):
+		return hermes.AttachmentVideo
+	case strings.HasSuffix(lowerName, ".mp3"), strings.HasSuffix(lowerName, ".ogg"):
+		return hermes.AttachmentAudio
+	default:
+		return hermes.AttachmentFile
 	}
 }

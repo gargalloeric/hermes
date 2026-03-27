@@ -140,11 +140,17 @@ func (p *Provider) mapAttachmentsToEmbeds(atts []hermes.Attachment) []map[string
 	embeds := make([]map[string]any, 0, len(atts))
 
 	for _, att := range atts {
-		embed := map[string]any{"url": att.URL}
+		embed := map[string]any{
+			"url":         att.URL,
+			"title":       att.FileName,
+			"description": att.MimeType,
+		}
 
-		// If it's an image, Discord needs it in the specific "image" object
-		if att.Type == hermes.AttachmentImage {
+		switch att.Type {
+		case hermes.AttachmentImage:
 			embed["image"] = map[string]string{"url": att.URL}
+		case hermes.AttachmentVideo:
+			embed["video"] = map[string]string{"url": att.URL}
 		}
 
 		embeds = append(embeds, embed)
