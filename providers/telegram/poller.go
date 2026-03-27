@@ -238,6 +238,7 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 		Sender: hermes.User{
 			ID:       strconv.FormatInt(u.Message.From.ID, 10),
 			Username: u.Message.From.Username,
+			IsBot:    u.Message.From.IsBot,
 		},
 		Text: u.Message.Text,
 		Type: hermes.TypeText,
