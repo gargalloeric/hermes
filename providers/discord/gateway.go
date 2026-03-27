@@ -28,7 +28,7 @@ const (
 )
 
 func (p *Provider) Listen(ctx context.Context, out chan<- *hermes.Message) error {
-	conn, _, err := websocket.Dial(ctx, gatewayURL, nil)
+	conn, _, err := websocket.Dial(ctx, p.gatewayURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to dial discord gateway: %w", err)
 	}

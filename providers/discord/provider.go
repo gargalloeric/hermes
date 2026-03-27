@@ -11,15 +11,12 @@ import (
 	"github.com/gargalloeric/hermes"
 )
 
-const (
-	baseURL    = "https://discord.com/api/v10"
-	gatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
-)
-
 // Provider implements the hermes.Provider interface for Discord.
 type Provider struct {
-	token  string
-	client *http.Client
+	token      string
+	client     *http.Client
+	baseURL    string
+	gatewayURL string
 }
 
 // New creates a new handcrafted Discord provider.
@@ -29,6 +26,8 @@ func New(token string) *Provider {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		baseURL:    "https://discord.com/api/v10",
+		gatewayURL: "wss://gateway.discord.gg/?v=10&encoding=json",
 	}
 }
 
@@ -160,7 +159,7 @@ func (p *Provider) mapAttachmentsToEmbeds(atts []hermes.Attachment) []map[string
 }
 
 func (p *Provider) doDiscordRequest(ctx context.Context, method, endpoint string, payload any) (*dsMessage, error) {
-	url := fmt.Sprintf("%s%s", baseURL, endpoint)
+	url := fmt.Sprintf("%s%s", p.baseURL, endpoint)
 
 	req, err := p.newRequest(ctx, method, url, payload)
 	if err != nil {
