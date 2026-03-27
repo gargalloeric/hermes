@@ -43,6 +43,7 @@ const (
 type User struct {
 	ID       string
 	Username string
+	IsBot    bool
 }
 
 // Attachment represents a media file or document associated with a message.

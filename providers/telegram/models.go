@@ -39,6 +39,7 @@ type tgMessage struct {
 type tgUser struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
+	IsBot    bool   `json:"is_bot"`
 }
 
 type tgPhotoSize struct {
