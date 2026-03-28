@@ -39,7 +39,7 @@ func (p *Provider) Name() string {
 func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildPayload(req)
 
-	dsResp, err := p.doDiscordRequest(ctx, http.MethodPost, endpoint, payload)
+	dsResp, err := p.makeRequest(ctx, http.MethodPost, endpoint, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (
 func (p *Provider) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildEditPayload(target, req)
 
-	dsResp, err := p.doDiscordRequest(ctx, http.MethodPatch, endpoint, payload)
+	dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (p *Provider) SendAction(ctx context.Context, req hermes.ActionRequest) err
 	endpoint := fmt.Sprintf("/channels/%s/%s", req.RecipientID, action)
 
 	// Typing indicator doesn't need a body, so we pass nil.
-	_, err := p.doDiscordRequest(ctx, http.MethodPost, endpoint, nil)
+	_, err := p.makeRequest(ctx, http.MethodPost, endpoint, nil)
 	return err
 }
 
@@ -158,7 +158,7 @@ func (p *Provider) mapAttachmentsToEmbeds(atts []hermes.Attachment) []map[string
 	return embeds
 }
 
-func (p *Provider) doDiscordRequest(ctx context.Context, method, endpoint string, payload any) (*dsMessage, error) {
+func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, payload any) (*dsMessage, error) {
 	url := fmt.Sprintf("%s%s", p.baseURL, endpoint)
 
 	req, err := p.newRequest(ctx, method, url, payload)
