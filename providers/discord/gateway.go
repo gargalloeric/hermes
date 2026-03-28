@@ -91,7 +91,8 @@ func (p *Provider) handleDispatch(payload dsPayload, out chan<- *hermes.Message)
 		return
 	}
 
-	if hermesMsg := p.mapToHermes(dsMsg); hermesMsg != nil {
+	hermesMsg := p.mapToHermes(dsMsg)
+	if hermesMsg != nil && !hermesMsg.Sender.IsBot {
 		out <- hermesMsg
 	}
 }
