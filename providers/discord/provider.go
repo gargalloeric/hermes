@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gargalloeric/hermes"
@@ -17,6 +19,7 @@ type Provider struct {
 	client     *http.Client
 	baseURL    string
 	gatewayURL string
+	maxRetries int
 }
 
 // New creates a new handcrafted Discord provider.
@@ -28,6 +31,7 @@ func New(token string) *Provider {
 		},
 		baseURL:    "https://discord.com/api/v10",
 		gatewayURL: "wss://gateway.discord.gg/?v=10&encoding=json",
+		maxRetries: 2,
 	}
 }
 
@@ -39,31 +43,56 @@ func (p *Provider) Name() string {
 func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildPayload(req)
 
-	dsResp, err := p.makeRequest(ctx, http.MethodPost, endpoint, payload)
-	if err != nil {
-		return nil, err
+	for range p.maxRetries {
+		dsResp, err := p.makeRequest(ctx, http.MethodPost, endpoint, payload)
+		if err != nil {
+			dsError, ok := errors.AsType[*dsError](err)
+			if ok && dsError.RetryAfter > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(dsError.RetryAfter):
+					continue
+				}
+			}
+			return nil, err
+		}
+
+		return &hermes.SentMessage{
+			ID:       dsResp.ID,
+			Platform: p.Name(),
+			ChatID:   dsResp.ChannelID,
+		}, nil
 	}
 
-	return &hermes.SentMessage{
-		ID:       dsResp.ID,
-		Platform: p.Name(),
-		ChatID:   dsResp.ChannelID,
-	}, nil
+	return nil, fmt.Errorf("failed to send message after %d retries", p.maxRetries)
 }
 
 func (p *Provider) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildEditPayload(target, req)
 
-	dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, payload)
-	if err != nil {
-		return nil, err
-	}
+	for range p.maxRetries {
+		dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, payload)
+		if err != nil {
+			dsError, ok := errors.AsType[*dsError](err)
+			if ok && dsError.RetryAfter > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(dsError.RetryAfter):
+					continue
+				}
+			}
+			return nil, err
+		}
 
-	return &hermes.SentMessage{
-		ID:       dsResp.ID,
-		Platform: p.Name(),
-		ChatID:   dsResp.ChannelID,
-	}, nil
+		return &hermes.SentMessage{
+			ID:       dsResp.ID,
+			Platform: p.Name(),
+			ChatID:   dsResp.ChannelID,
+		}, nil
+	}
+	return nil, fmt.Errorf("failed to edit message after %d retries", p.maxRetries)
 }
 
 func (p *Provider) SendAction(ctx context.Context, req hermes.ActionRequest) error {
@@ -86,21 +115,6 @@ func (p *Provider) mapAction(action hermes.ActionType) string {
 	default:
 		return "typing"
 	}
-}
-
-func (p *Provider) checkResponse(resp *http.Response) error {
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-
-	var dsErr dsError
-	if err := json.NewDecoder(resp.Body).Decode(&dsErr); err != nil {
-		return fmt.Errorf("discord API returned status %d (could not decode error body)", resp.StatusCode)
-	}
-
-	dsErr.Status = resp.StatusCode
-
-	return &dsErr
 }
 
 // buildPayload constructs the correct Discord endpoint and JSON payload.
@@ -158,7 +172,7 @@ func (p *Provider) mapAttachmentsToEmbeds(atts []hermes.Attachment) []map[string
 	return embeds
 }
 
-func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, payload any) (*dsMessage, error) {
+func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, payload any) (*dsResponse, error) {
 	url := fmt.Sprintf("%s%s", p.baseURL, endpoint)
 
 	req, err := p.newRequest(ctx, method, url, payload)
@@ -172,18 +186,19 @@ func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, pay
 	}
 	defer resp.Body.Close()
 
-	if err := p.checkResponse(resp); err != nil {
-		return nil, err
-	}
-
-	// Discord actions (e.g. typing) don't return a body.
 	if resp.StatusCode == http.StatusNoContent {
-		return nil, nil
+		return &dsResponse{Ok: true}, nil
 	}
 
-	var dsResp dsMessage
+	var dsResp dsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&dsResp); err != nil {
 		return nil, fmt.Errorf("failed to decode discord response: %w", err)
+	}
+
+	dsResp.Ok = resp.StatusCode >= 200 && resp.StatusCode < 300
+
+	if !dsResp.Ok {
+		return nil, p.wrapError(resp, &dsResp)
 	}
 
 	return &dsResp, nil
@@ -212,4 +227,22 @@ func (p *Provider) newRequest(ctx context.Context, method, url string, payload a
 	}
 
 	return req, nil
+}
+
+// wrapError centralizes the logic for extracting rate limits and error messages.
+func (p *Provider) wrapError(resp *http.Response, body *dsResponse) error {
+	retry := body.RetryAfter
+
+	// Discord header takes priority over the body for rate limits
+	if h := resp.Header.Get("Retry-After"); h != "" {
+		if val, err := strconv.ParseFloat(h, 64); err == nil {
+			retry = val
+		}
+	}
+
+	return &dsError{
+		Code:       body.ErrorCode,
+		Message:    body.Description,
+		RetryAfter: time.Duration(retry * float64(time.Second)),
+	}
 }
