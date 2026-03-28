@@ -65,12 +65,21 @@ type dsEmbed struct {
 	URL         string `json:"url,omitempty"`
 }
 
+// dsResponse acts as the internal envelope, mirroring the Telegram pattern.
+type dsResponse struct {
+	dsMessage
+	Ok          bool    `json:"-"`
+	Description string  `json:"message,omitempty"`     // Populated on Error
+	ErrorCode   int     `json:"code,omitempty"`        // Populated on Error
+	RetryAfter  float64 `json:"retry_after,omitempty"` // Populated on 429
+}
+
 type dsError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Status  int    `json:"-"`
+	Code       int
+	Message    string
+	RetryAfter time.Duration
 }
 
 func (e *dsError) Error() string {
-	return fmt.Sprintf("discord API error (%d): %s (status %d)", e.Code, e.Message, e.Status)
+	return fmt.Sprintf("discord API error (%d): %s", e.Code, e.Message)
 }
