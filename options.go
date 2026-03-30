@@ -1,5 +1,7 @@
 package hermes
 
+import "path"
+
 // SendOptions holds configuration for outgoing messages.
 type SendOptions struct {
 	Attachments []Attachment
@@ -20,8 +22,9 @@ func AsReply() SendOption {
 func WithImage(url string) SendOption {
 	return func(so *SendOptions) {
 		so.Attachments = append(so.Attachments, Attachment{
-			Type: AttachmentImage,
-			URL:  url,
+			Type:     AttachmentImage,
+			URL:      url,
+			FileName: path.Base(url),
 		})
 	}
 }
@@ -30,8 +33,9 @@ func WithImage(url string) SendOption {
 func WithDocument(url string) SendOption {
 	return func(so *SendOptions) {
 		so.Attachments = append(so.Attachments, Attachment{
-			Type: AttachmentFile,
-			URL:  url,
+			Type:     AttachmentFile,
+			URL:      url,
+			FileName: path.Base(url),
 		})
 	}
 }

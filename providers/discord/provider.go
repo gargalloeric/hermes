@@ -9,7 +9,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"path"
 	"strconv"
 	"time"
 
@@ -53,8 +52,7 @@ func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (
 			if err != nil {
 				return nil, err
 			}
-			contentType := http.DetectContentType(data)
-			files = append(files, dsFile{FileName: att.FileName, Data: data, ContentType: contentType})
+			files = append(files, dsFile{FileName: att.FileName, Data: data})
 		}
 	}
 
@@ -260,7 +258,6 @@ func (p *Provider) splitAttachments(atts []hermes.Attachment) ([]map[string]any,
 				"video": map[string]string{"url": att.URL},
 			})
 		default:
-			att.FileName = path.Base(att.URL)
 			uploads = append(uploads, att)
 		}
 	}
