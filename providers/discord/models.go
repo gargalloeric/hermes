@@ -83,3 +83,9 @@ type dsError struct {
 func (e *dsError) Error() string {
 	return fmt.Sprintf("discord API error (%d): %s", e.Code, e.Message)
 }
+
+type dsFile struct {
+	FileName    string
+	Data        []byte
+	ContentType string
+}

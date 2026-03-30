@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"path"
 	"strconv"
 	"time"
 
@@ -41,10 +44,27 @@ func (p *Provider) Name() string {
 }
 
 func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	endpoint, payload := p.buildPayload(req)
+	endpoint, payload, uploads := p.buildPayload(req)
+
+	var files []dsFile
+	if len(uploads) > 0 {
+		for _, att := range uploads {
+			data, err := p.downloadFile(ctx, att.URL)
+			if err != nil {
+				return nil, err
+			}
+			contentType := http.DetectContentType(data)
+			files = append(files, dsFile{FileName: att.FileName, Data: data, ContentType: contentType})
+		}
+	}
+
+	body, contentType, err := p.encode(payload, files)
+	if err != nil {
+		return nil, err
+	}
 
 	for range p.maxRetries {
-		dsResp, err := p.makeRequest(ctx, http.MethodPost, endpoint, payload)
+		dsResp, err := p.makeRequest(ctx, http.MethodPost, endpoint, body, contentType)
 		if err != nil {
 			dsError, ok := errors.AsType[*dsError](err)
 			if ok && dsError.RetryAfter > 0 {
@@ -71,8 +91,13 @@ func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (
 func (p *Provider) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildEditPayload(target, req)
 
+	body, contentType, err := p.encode(payload, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	for range p.maxRetries {
-		dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, payload)
+		dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, body, contentType)
 		if err != nil {
 			dsError, ok := errors.AsType[*dsError](err)
 			if ok && dsError.RetryAfter > 0 {
@@ -100,7 +125,7 @@ func (p *Provider) SendAction(ctx context.Context, req hermes.ActionRequest) err
 	endpoint := fmt.Sprintf("/channels/%s/%s", req.RecipientID, action)
 
 	// Typing indicator doesn't need a body, so we pass nil.
-	_, err := p.makeRequest(ctx, http.MethodPost, endpoint, nil)
+	_, err := p.makeRequest(ctx, http.MethodPost, endpoint, nil, "")
 	return err
 }
 
@@ -118,7 +143,7 @@ func (p *Provider) mapAction(action hermes.ActionType) string {
 }
 
 // buildPayload constructs the correct Discord endpoint and JSON payload.
-func (p *Provider) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
+func (p *Provider) buildPayload(req hermes.MessageRequest) (string, map[string]any, []hermes.Attachment) {
 	endpoint := fmt.Sprintf("/channels/%s/messages", req.RecipientID)
 	payload := make(map[string]any)
 
@@ -133,10 +158,75 @@ func (p *Provider) buildPayload(req hermes.MessageRequest) (string, map[string]a
 	}
 
 	if len(req.Attachments) > 0 {
-		payload["embeds"] = p.mapAttachmentsToEmbeds(req.Attachments)
+		embeds, uploads := p.splitAttachments(req.Attachments)
+
+		if len(embeds) > 0 {
+			payload["embeds"] = embeds
+		}
+
+		return endpoint, payload, uploads
 	}
 
-	return endpoint, payload
+	return endpoint, payload, nil
+}
+
+func (p *Provider) downloadFile(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build download request for %s", url)
+	}
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request to url %s", url)
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+
+func (p *Provider) encode(payload map[string]any, files []dsFile) ([]byte, string, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to marshal discord payload: %w", err)
+	}
+
+	if len(files) == 0 {
+		return payloadBytes, "application/json", nil
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	defer writer.Close()
+
+	pJson, err := writer.CreateFormField("payload_json")
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create payload_json field: %w", err)
+	}
+
+	_, err = pJson.Write(payloadBytes)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to write data to payload_json field: %w", err)
+	}
+
+	for i, file := range files {
+		fieldName := fmt.Sprintf("files[%d]", i)
+		pFile, err := writer.CreateFormFile(fieldName, file.FileName)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to encode file %s: %w", file.FileName, err)
+		}
+
+		_, err = io.Copy(pFile, bytes.NewReader(file.Data))
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to encode file %s: %w", file.FileName, err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
+	}
+
+	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
 func (p *Provider) buildEditPayload(target *hermes.SentMessage, req hermes.MessageRequest) (string, map[string]any) {
@@ -149,33 +239,39 @@ func (p *Provider) buildEditPayload(target *hermes.SentMessage, req hermes.Messa
 	return endpoint, payload
 }
 
-func (p *Provider) mapAttachmentsToEmbeds(atts []hermes.Attachment) []map[string]any {
-	embeds := make([]map[string]any, 0, len(atts))
+// splitAttachments splits the attachments in two gorups, the attachments that can be send as embeds to the Discord API
+// and the attachments that need to be uploaded as multipart/form-data.
+func (p *Provider) splitAttachments(atts []hermes.Attachment) ([]map[string]any, []hermes.Attachment) {
+	var embeds []map[string]any
+	var uploads []hermes.Attachment
 
 	for _, att := range atts {
-		embed := map[string]any{
-			"url":         att.URL,
-			"title":       att.FileName,
-			"description": att.MimeType,
-		}
-
 		switch att.Type {
 		case hermes.AttachmentImage:
-			embed["image"] = map[string]string{"url": att.URL}
+			embeds = append(embeds, map[string]any{
+				"url":   att.URL,
+				"title": att.FileName,
+				"image": map[string]string{"url": att.URL},
+			})
 		case hermes.AttachmentVideo:
-			embed["video"] = map[string]string{"url": att.URL}
+			embeds = append(embeds, map[string]any{
+				"url":   att.URL,
+				"title": att.FileName,
+				"video": map[string]string{"url": att.URL},
+			})
+		default:
+			att.FileName = path.Base(att.URL)
+			uploads = append(uploads, att)
 		}
-
-		embeds = append(embeds, embed)
 	}
 
-	return embeds
+	return embeds, uploads
 }
 
-func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, payload any) (*dsResponse, error) {
+func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, payload []byte, contentType string) (*dsResponse, error) {
 	url := fmt.Sprintf("%s%s", p.baseURL, endpoint)
 
-	req, err := p.newRequest(ctx, method, url, payload)
+	req, err := p.newRequest(ctx, method, url, payload, contentType)
 	if err != nil {
 		return nil, err
 	}
@@ -204,18 +300,8 @@ func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, pay
 	return &dsResp, nil
 }
 
-func (p *Provider) newRequest(ctx context.Context, method, url string, payload any) (*http.Request, error) {
-	var body []byte
-	var err error
-
-	if payload != nil {
-		body, err = json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal discord payload: %w", err)
-		}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewBuffer(body))
+func (p *Provider) newRequest(ctx context.Context, method, url string, payload []byte, contentType string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discord request: %w", err)
 	}
@@ -223,7 +309,7 @@ func (p *Provider) newRequest(ctx context.Context, method, url string, payload a
 	req.Header.Set("Authorization", p.token)
 	req.Header.Set("User-Agent", hermes.UserAgent())
 	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	return req, nil
