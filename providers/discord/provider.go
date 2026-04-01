@@ -43,26 +43,27 @@ func (p *Provider) Name() string {
 }
 
 func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	endpoint, payload, uploads := p.buildPayload(req)
+	payload := p.buildPayload(req)
 
 	var files []dsFile
-	if len(uploads) > 0 {
-		for _, att := range uploads {
+	if len(payload.Files) > 0 {
+		for _, att := range payload.Files {
 			data, err := p.downloadFile(ctx, att.URL)
 			if err != nil {
 				return nil, err
 			}
 			files = append(files, dsFile{FileName: att.FileName, Data: data})
+			files = append(files, dsFile{FileName: att.FileName, Data: data})
 		}
 	}
 
-	body, contentType, err := p.encode(payload, files)
+	encoded, err := p.encode(payload.Data, files)
 	if err != nil {
 		return nil, err
 	}
 
 	for range p.maxRetries {
-		dsResp, err := p.makeRequest(ctx, http.MethodPost, endpoint, body, contentType)
+		dsResp, err := p.makeRequest(ctx, http.MethodPost, payload.Endpoint, encoded.Bytes, encoded.ContentType)
 		if err != nil {
 			dsError, ok := errors.AsType[*dsError](err)
 			if ok && dsError.RetryAfter > 0 {
@@ -89,13 +90,13 @@ func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (
 func (p *Provider) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	endpoint, payload := p.buildEditPayload(target, req)
 
-	body, contentType, err := p.encode(payload, nil)
+	encoded, err := p.encode(payload, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	for range p.maxRetries {
-		dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, body, contentType)
+		dsResp, err := p.makeRequest(ctx, http.MethodPatch, endpoint, encoded.Bytes, encoded.ContentType)
 		if err != nil {
 			dsError, ok := errors.AsType[*dsError](err)
 			if ok && dsError.RetryAfter > 0 {
@@ -140,32 +141,40 @@ func (p *Provider) mapAction(action hermes.ActionType) string {
 	}
 }
 
+type payload struct {
+	Endpoint string
+	Data     map[string]any
+	Files    []hermes.Attachment
+}
+
 // buildPayload constructs the correct Discord endpoint and JSON payload.
-func (p *Provider) buildPayload(req hermes.MessageRequest) (string, map[string]any, []hermes.Attachment) {
-	endpoint := fmt.Sprintf("/channels/%s/messages", req.RecipientID)
-	payload := make(map[string]any)
+func (p *Provider) buildPayload(req hermes.MessageRequest) payload {
+	pd := payload{
+		Endpoint: fmt.Sprintf("/channels/%s/messages", req.RecipientID),
+		Data:     make(map[string]any),
+	}
 
 	if req.Text != "" {
-		payload["content"] = req.Text
+		pd.Data["content"] = req.Text
 	}
 
 	if req.ReplyToID != "" {
-		payload["message_reference"] = map[string]string{
+		pd.Data["message_reference"] = map[string]string{
 			"message_id": req.ReplyToID,
 		}
 	}
 
 	if len(req.Attachments) > 0 {
-		embeds, uploads := p.splitAttachments(req.Attachments)
+		embeds, files := p.splitAttachments(req.Attachments)
 
 		if len(embeds) > 0 {
-			payload["embeds"] = embeds
+			pd.Data["embeds"] = embeds
 		}
 
-		return endpoint, payload, uploads
+		pd.Files = files
 	}
 
-	return endpoint, payload, nil
+	return pd
 }
 
 func (p *Provider) downloadFile(ctx context.Context, url string) ([]byte, error) {
@@ -183,14 +192,22 @@ func (p *Provider) downloadFile(ctx context.Context, url string) ([]byte, error)
 	return io.ReadAll(resp.Body)
 }
 
-func (p *Provider) encode(payload map[string]any, files []dsFile) ([]byte, string, error) {
+type encodedData struct {
+	Bytes       []byte
+	ContentType string
+}
+
+func (p *Provider) encode(payload map[string]any, files []dsFile) (encodedData, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to marshal discord payload: %w", err)
+		return encodedData{}, fmt.Errorf("failed to marshal discord payload: %w", err)
 	}
 
 	if len(files) == 0 {
-		return payloadBytes, "application/json", nil
+		return encodedData{
+			Bytes:       payloadBytes,
+			ContentType: "application/json",
+		}, nil
 	}
 
 	var body bytes.Buffer
@@ -199,32 +216,35 @@ func (p *Provider) encode(payload map[string]any, files []dsFile) ([]byte, strin
 
 	pJson, err := writer.CreateFormField("payload_json")
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create payload_json field: %w", err)
+		return encodedData{}, fmt.Errorf("failed to create payload_json field: %w", err)
 	}
 
 	_, err = pJson.Write(payloadBytes)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to write data to payload_json field: %w", err)
+		return encodedData{}, fmt.Errorf("failed to write data to payload_json field: %w", err)
 	}
 
 	for i, file := range files {
 		fieldName := fmt.Sprintf("files[%d]", i)
 		pFile, err := writer.CreateFormFile(fieldName, file.FileName)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to encode file %s: %w", file.FileName, err)
+			return encodedData{}, fmt.Errorf("failed to encode file %s: %w", file.FileName, err)
 		}
 
 		_, err = io.Copy(pFile, bytes.NewReader(file.Data))
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to encode file %s: %w", file.FileName, err)
+			return encodedData{}, fmt.Errorf("failed to encode file %s: %w", file.FileName, err)
 		}
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("failed to close multipart writer: %w", err)
+		return encodedData{}, fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	return body.Bytes(), writer.FormDataContentType(), nil
+	return encodedData{
+		Bytes:       body.Bytes(),
+		ContentType: writer.FormDataContentType(),
+	}, nil
 }
 
 func (p *Provider) buildEditPayload(target *hermes.SentMessage, req hermes.MessageRequest) (string, map[string]any) {
@@ -237,11 +257,11 @@ func (p *Provider) buildEditPayload(target *hermes.SentMessage, req hermes.Messa
 	return endpoint, payload
 }
 
-// splitAttachments splits the attachments in two gorups, the attachments that can be send as embeds to the Discord API
+// splitAttachments splits the attachments in two groups, the attachments that can be send as embeds to the Discord API
 // and the attachments that need to be uploaded as multipart/form-data.
 func (p *Provider) splitAttachments(atts []hermes.Attachment) ([]map[string]any, []hermes.Attachment) {
 	var embeds []map[string]any
-	var uploads []hermes.Attachment
+	var files []hermes.Attachment
 
 	for _, att := range atts {
 		switch att.Type {
@@ -258,11 +278,11 @@ func (p *Provider) splitAttachments(atts []hermes.Attachment) ([]map[string]any,
 				"video": map[string]string{"url": att.URL},
 			})
 		default:
-			uploads = append(uploads, att)
+			files = append(files, att)
 		}
 	}
 
-	return embeds, uploads
+	return embeds, files
 }
 
 func (p *Provider) makeRequest(ctx context.Context, method, endpoint string, payload []byte, contentType string) (*dsResponse, error) {

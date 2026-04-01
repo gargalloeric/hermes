@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,11 +15,14 @@ import (
 
 // Gateway OpCodes
 const (
-	dsOpDispatch     = 0  // Receive: An event was dispatched.
-	dsOpHeartbeat    = 1  // Send/Reveive: Used for ping-pong.
-	dsOpIdentify     = 2  // Send: Used for client handshake.
-	dsOpHello        = 10 // Receive: Sent by Discord immediately after connecting.
-	dsOpHeartbeatAck = 11 // Receive: Sent by Discord to acknowledge a heartbeat.
+	dsOpDispatch       = 0  // Receive: An event was dispatched.
+	dsOpHeartbeat      = 1  // Send/Reveive: Used for ping-pong.
+	dsOpIdentify       = 2  // Send: Used for client handshake.
+	dsOpResume         = 6  // Send: Attempt to resume a disconnected session
+	dsOpReconnect      = 7  // Receive: Server is asking us to reconnect
+	dsOpInvalidSession = 9  // Receive: Session is dead, must re-identify
+	dsOpHello          = 10 // Receive: Sent by Discord immediately after connecting.
+	dsOpHeartbeatAck   = 11 // Receive: Sent by Discord to acknowledge a heartbeat.
 )
 
 // Gateway Intents (Permissions)
@@ -27,23 +31,75 @@ const (
 	dsIntentMessageContent = 1 << 15 // 32768 (Note: v10 requires this for message text!)
 )
 
-func (p *Provider) Listen(ctx context.Context, out chan<- *hermes.Message) error {
-	conn, _, err := websocket.Dial(ctx, p.gatewayURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to dial discord gateway: %w", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "hermes-session-end")
+type sessionState struct {
+	mu        sync.RWMutex
+	id        string
+	resumeURL string
+	sequence  atomic.Int64
+}
 
-	var sequence atomic.Int64
+type gatewayManager struct {
+	provider *Provider
+	session  *sessionState
+}
+
+func (p *Provider) Listen(ctx context.Context, out chan<- *hermes.Message) error {
+	mgr := &gatewayManager{
+		provider: p,
+		session:  &sessionState{},
+	}
+
+	return mgr.run(ctx, out)
+}
+
+func (m *gatewayManager) run(ctx context.Context, out chan<- *hermes.Message) error {
+	backoff := 1 * time.Second
 
 	for {
-		_, data, err := conn.Read(ctx)
+		err := m.connectAndRead(ctx, out)
+
+		// Exit if the parent context is cancelled
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		// Handle reconnecting timing
 		if err != nil {
-			// If the context is cancelled, this isn't an "error" we want to bubble up as a failure.
-			if ctx.Err() != nil {
+			select {
+			case <-ctx.Done():
 				return nil
+			case <-time.After(backoff):
+				if backoff < 60*time.Second {
+					backoff *= 2
+				}
 			}
-			return fmt.Errorf("discord websocket read error: %w", err)
+		} else {
+			backoff = 1 * time.Second
+		}
+	}
+}
+
+func (m *gatewayManager) connectAndRead(ctx context.Context, out chan<- *hermes.Message) error {
+	m.session.mu.RLock()
+	dialURL := m.provider.gatewayURL
+	if m.session.resumeURL != "" {
+		dialURL = m.session.resumeURL
+	}
+	m.session.mu.RUnlock()
+
+	connCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(connCtx, dialURL, nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "reconnecting")
+
+	for {
+		_, data, err := conn.Read(connCtx)
+		if err != nil {
+			return err
 		}
 
 		var payload dsPayload
@@ -51,56 +107,112 @@ func (p *Provider) Listen(ctx context.Context, out chan<- *hermes.Message) error
 			continue // Skip malformed payloads
 		}
 
-		if payload.S != 0 {
-			sequence.Store(payload.S)
-		}
-
-		switch payload.Op {
-		case dsOpHello:
-			var hello dsHello
-			if err := json.Unmarshal(payload.D, &hello); err != nil {
-				return fmt.Errorf("failed to parse hello: %w", err)
-			}
-
-			go p.startHeartbeat(ctx, conn, &sequence, hello.HeartbeatInterval)
-
-			if err := p.identify(ctx, conn); err != nil {
-				return fmt.Errorf("failed to identify: %w", err)
-			}
-
-		case dsOpDispatch:
-			p.handleDispatch(payload, out)
-
-		case dsOpHeartbeat:
-			p.sendHeartbeat(ctx, conn, &sequence)
-
-		case dsOpHeartbeatAck:
-			// Acknowledged! The connection is healthy.
+		if err := m.handleOP(connCtx, conn, payload, out); err != nil {
+			return err
 		}
 	}
+
 }
 
-// handleDispatch separates the routing logic from the connection logic.
-func (p *Provider) handleDispatch(payload dsPayload, out chan<- *hermes.Message) {
+func (m *gatewayManager) handleOP(ctx context.Context, conn *websocket.Conn, payload dsPayload, out chan<- *hermes.Message) error {
+	if payload.S != 0 {
+		m.session.sequence.Store(payload.S)
+	}
+
+	switch payload.Op {
+	case dsOpHello:
+		var hello dsHello
+		if err := json.Unmarshal(payload.D, &hello); err != nil {
+			return fmt.Errorf("failed to parse hello: %w", err)
+		}
+
+		go m.provider.startHeartbeat(ctx, conn, &m.session.sequence, hello.HeartbeatInterval)
+
+		m.session.mu.RLock()
+		sid := m.session.id
+		m.session.mu.RUnlock()
+
+		if sid != "" {
+			return m.resume(ctx, conn, sid, m.session.sequence.Load())
+		}
+
+		return m.identify(ctx, conn)
+
+	case dsOpDispatch:
+		return m.dispatch(payload, out)
+
+	case dsOpReconnect:
+		return fmt.Errorf("server requested reconnect")
+
+	case dsOpInvalidSession:
+		var resumable bool
+		if err := json.Unmarshal(payload.D, &resumable); err != nil {
+			return fmt.Errorf("failed to parse resumable: %w", err)
+		}
+
+		if !resumable {
+			m.session.mu.Lock()
+			m.session.id = ""
+			m.session.mu.Unlock()
+		}
+		return fmt.Errorf("session invalid (resumable: %v)", resumable)
+
+	case dsOpHeartbeat:
+		return m.provider.sendHeartbeat(ctx, conn, &m.session.sequence)
+
+	case dsOpHeartbeatAck:
+		// Acknowledge! The connection is healthy
+	}
+
+	return nil
+}
+
+func (m *gatewayManager) resume(ctx context.Context, conn *websocket.Conn, sessionID string, seq int64) error {
+	res := dsResume{
+		Token:     m.provider.token,
+		SessionID: sessionID,
+		Seq:       seq,
+	}
+
+	return m.provider.writePayload(ctx, conn, dsOpResume, res)
+}
+
+func (m *gatewayManager) dispatch(payload dsPayload, out chan<- *hermes.Message) error {
+	if payload.T == "READY" {
+		var ready dsReady
+		if err := json.Unmarshal(payload.D, &ready); err != nil {
+			return fmt.Errorf("failed to parse ready: %w", err)
+		}
+
+		m.session.mu.Lock()
+		m.session.id = ready.SessionID
+		m.session.resumeURL = ready.ResumeURL
+		m.session.mu.Unlock()
+
+		return nil
+	}
+
 	if payload.T != "MESSAGE_CREATE" {
-		return
+		return nil
 	}
 
 	var dsMsg dsMessage
 	if err := json.Unmarshal(payload.D, &dsMsg); err != nil {
-		return
+		return fmt.Errorf("failed to parse message: %w", err)
 	}
 
-	hermesMsg := p.mapToHermes(dsMsg)
+	hermesMsg := m.provider.mapToHermes(dsMsg)
 	if hermesMsg != nil && !hermesMsg.Sender.IsBot {
 		out <- hermesMsg
 	}
+
+	return nil
 }
 
 // identify sends the authentication payload to Discord.
-func (p *Provider) identify(ctx context.Context, conn *websocket.Conn) error {
+func (m *gatewayManager) identify(ctx context.Context, conn *websocket.Conn) error {
 	id := dsIdentity{
-		Token:   p.token,
+		Token:   m.provider.token,
 		Intents: dsIntentGuildMessages | dsIntentMessageContent,
 		Properties: dsIdentifyProperties{
 			OS:      "linux",
@@ -183,13 +295,19 @@ func (p *Provider) mapToHermes(dsMsg dsMessage) *hermes.Message {
 	}
 
 	if len(dsMsg.Attachments) > 0 {
-		m.Attachments = p.mapAttachments(m, dsMsg.Attachments)
+		m.Attachments = p.mapAttachments(dsMsg.Attachments)
+
+		for _, att := range m.Attachments {
+			if att.Type != hermes.AttachmentFile {
+				m.Type = hermes.MessageType(att.Type)
+			}
+		}
 	}
 
 	return m
 }
 
-func (p *Provider) mapAttachments(m *hermes.Message, atts []dsAttachment) []hermes.Attachment {
+func (p *Provider) mapAttachments(atts []dsAttachment) []hermes.Attachment {
 	hermesAtts := make([]hermes.Attachment, 0, len(atts))
 
 	for _, att := range atts {
@@ -201,10 +319,6 @@ func (p *Provider) mapAttachments(m *hermes.Message, atts []dsAttachment) []herm
 			FileName: att.Filename,
 			Type:     resolvedType,
 			MimeType: att.ContentType,
-		}
-
-		if m.Type == hermes.TypeText && resolvedType != hermes.AttachmentFile {
-			m.Type = hermes.MessageType(resolvedType)
 		}
 
 		hermesAtts = append(hermesAtts, hermesAtt)

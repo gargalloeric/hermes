@@ -85,7 +85,17 @@ func (e *dsError) Error() string {
 }
 
 type dsFile struct {
-	FileName    string
-	Data        []byte
-	ContentType string
+	FileName string
+	Data     []byte
+}
+
+type dsReady struct {
+	SessionID string `json:"session_id"`
+	ResumeURL string `json:"resume_gateway_url"`
+}
+
+type dsResume struct {
+	Token     string `json:"token"`
+	SessionID string `json:"session_id"`
+	Seq       int64  `json:"seq"`
 }
