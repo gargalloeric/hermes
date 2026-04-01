@@ -299,3 +299,186 @@ func TestProvider_Listen(t *testing.T) {
 		t.Errorf("Listen returned error on shutdown: %v", err)
 	}
 }
+
+func TestProvider_GatewayResumption(t *testing.T) {
+	connCount := 0
+	sessionID := "fake_session_123"
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, _ := websocket.Accept(w, r, nil)
+		connCount++
+		ctx := r.Context()
+
+		// 1. Send Hello
+		hello, _ := json.Marshal(dsPayload{Op: dsOpHello, D: json.RawMessage(`{"heartbeat_interval": 45000}`)})
+		conn.Write(ctx, websocket.MessageText, hello)
+
+		// 2. Read Client Response
+		_, data, _ := conn.Read(ctx)
+		var p dsPayload
+		json.Unmarshal(data, &p)
+
+		if connCount == 1 {
+			if p.Op != dsOpIdentify {
+				t.Errorf("First connection should Identify, got %d", p.Op)
+			}
+			// Send READY to give the client a session ID
+			ready, _ := json.Marshal(dsPayload{
+				Op: dsOpDispatch, T: "READY",
+				D: json.RawMessage(`{"session_id": "` + sessionID + `", "resume_gateway_url": "ws://..."}`),
+			})
+			conn.Write(ctx, websocket.MessageText, ready)
+			// Simulate a server-side drop
+			conn.Close(websocket.StatusNormalClosure, "dropping you")
+		} else {
+			if p.Op != dsOpResume {
+				t.Errorf("Second connection should Resume, got %d", p.Op)
+			}
+		}
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	p := New("token")
+	p.gatewayURL = "ws" + strings.TrimPrefix(server.URL, "http")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	// We run Listen. It should connect, get dropped, and reconnect.
+	out := make(chan *hermes.Message)
+	go p.Listen(ctx, out)
+
+	// Wait for the second connection to happen or timeout
+	time.Sleep(500 * time.Millisecond)
+}
+
+func TestProvider_SendMessage_RateLimitRetry(t *testing.T) {
+	attempts := 0
+	retryDuration := 100 * time.Millisecond
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			// First attempt: Return 429 with a Retry-After header (seconds)
+			w.Header().Set("Retry-After", "0.1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]any{
+				"message":     "You are being rate limited.",
+				"retry_after": 0.1,
+				"code":        20000,
+			})
+			return
+		}
+
+		// Second attempt: Return 200 OK
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(dsResponse{
+			dsMessage: dsMessage{
+				ID:        "retry-success-id",
+				ChannelID: "67890",
+			},
+		})
+	})
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	p := New("fake-token")
+	p.baseURL = server.URL
+
+	start := time.Now()
+	msg, err := p.SendMessage(t.Context(), hermes.MessageRequest{
+		RecipientID: "67890",
+		Text:        "Testing retries",
+	})
+
+	if err != nil {
+		t.Fatalf("SendMessage failed after retries: %v", err)
+	}
+
+	if attempts != 2 {
+		t.Errorf("expected 2 attempts, got %d", attempts)
+	}
+
+	if time.Since(start) < retryDuration {
+		t.Errorf("test finished too fast (%v), retry logic might not be sleeping", time.Since(start))
+	}
+
+	if msg.ID != "retry-success-id" {
+		t.Errorf("expected ID retry-success-id, got %s", msg.ID)
+	}
+}
+
+func TestProvider_SendMessage_Multipart(t *testing.T) {
+	fileContent := []byte("fake-file-binary-data")
+	fileHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(fileContent)
+	})
+	fileServer := httptest.NewServer(fileHandler)
+	defer fileServer.Close()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if the content type is multipart
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Errorf("expected multipart content, got %s", r.Header.Get("Content-Type"))
+		}
+
+		// Parse the multipart form
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("failed to parse multipart form: %v", err)
+		}
+
+		// Verify payload_json field (Discord requirement)
+		payloadJSON := r.FormValue("payload_json")
+		if !strings.Contains(payloadJSON, "I have a file") {
+			t.Errorf("payload_json missing text content, got: %s", payloadJSON)
+		}
+
+		// Verify the file part
+		file, header, err := r.FormFile("files[0]")
+		if err != nil {
+			t.Fatalf("expected file in files[0], got error: %v", err)
+		}
+		defer file.Close()
+
+		if header.Filename != "data.bin" {
+			t.Errorf("expected filename data.bin, got %s", header.Filename)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(dsResponse{
+			dsMessage: dsMessage{
+				ID: "msg-with-file",
+			},
+		})
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	p := New("fake-token")
+	p.baseURL = server.URL
+
+	req := hermes.MessageRequest{
+		RecipientID: "123",
+		Text:        "I have a file",
+		Attachments: []hermes.Attachment{
+			{
+				ID:       "att-1",
+				URL:      fileServer.URL + "/data.bin", // Link to our local file server
+				FileName: "data.bin",
+				Type:     hermes.AttachmentFile, // Files trigger multipart, Images/Videos trigger Embeds
+			},
+		},
+	}
+
+	msg, err := p.SendMessage(t.Context(), req)
+	if err != nil {
+		t.Fatalf("SendMessage with multipart failed: %v", err)
+	}
+
+	if msg.ID != "msg-with-file" {
+		t.Errorf("expected ID msg-with-file, got %s", msg.ID)
+	}
+}
