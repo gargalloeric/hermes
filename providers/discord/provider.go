@@ -53,7 +53,6 @@ func (p *Provider) SendMessage(ctx context.Context, req hermes.MessageRequest) (
 				return nil, err
 			}
 			files = append(files, dsFile{FileName: att.FileName, Data: data})
-			files = append(files, dsFile{FileName: att.FileName, Data: data})
 		}
 	}
 
