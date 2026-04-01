@@ -10,20 +10,22 @@ import (
 	"time"
 
 	"github.com/gargalloeric/hermes"
-	"github.com/gargalloeric/hermes/providers/telegram"
+	"github.com/gargalloeric/hermes/providers/discord"
 )
 
 func main() {
-	token := os.Getenv("TELEGRAM_TOKEN")
+	token := os.Getenv("DISCORD_TOKEN")
 	if token == "" {
-		log.Fatal("Set TELEGRAM_TOKEN environment variable")
+		log.Fatal("Set DISCORD_TOKEN environment variable")
 	}
 
 	// Initialize a provider, e.g. Telegram
-	tg := telegram.NewPoller(token)
+	// tg := telegram.NewPoller(token)
+
+	ds := discord.New(token)
 
 	// Initialize the client with the providers.
-	client := hermes.New(hermes.WithProvider(tg))
+	client := hermes.New(hermes.WithProvider(ds))
 
 	client.OnCommand("/ping", func(c *hermes.Context) {
 		// Standard send
@@ -45,6 +47,7 @@ func main() {
 	client.OnCommand("/img", func(c *hermes.Context) {
 		imgURL := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
 		c.Send("Here is an image for you!", hermes.WithImage(imgURL))
+
 	})
 
 	// React to events
@@ -57,7 +60,10 @@ func main() {
 	client.OnCommand("/report", func(c *hermes.Context) {
 		reportURL := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
 
-		c.Send("Here is the requested document.", hermes.WithDocument(reportURL))
+		_, err := c.Send("Here is the requested document.", hermes.WithDocument(reportURL))
+		if err != nil {
+			log.Printf("failed reporting: %s", err)
+		}
 	})
 
 	// Send multiple images to the chat
@@ -101,6 +107,14 @@ func main() {
 	// Customize the routing predicate with a custom Matcher
 	client.On(func(m *hermes.Message) bool { return m.Type == hermes.TypeLocation }, func(c *hermes.Context) {
 		c.Send("You are currently at coordinates: " + c.Message.Text)
+	})
+
+	client.OnCommand("/typing", func(c *hermes.Context) {
+		c.Action(hermes.ActionTyping)
+
+		time.Sleep(5 * time.Second)
+
+		c.Send("Finished processing...")
 	})
 
 	// React to simple text messges
