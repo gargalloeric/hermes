@@ -32,10 +32,16 @@ const (
 )
 
 type sessionState struct {
+	backoff time.Duration
+
 	mu        sync.RWMutex
 	id        string
 	resumeURL string
 	sequence  atomic.Int64
+}
+
+func (s *sessionState) isBackoffUnder(d time.Duration) bool {
+	return s.backoff < d
 }
 
 type gatewayManager struct {
@@ -46,15 +52,15 @@ type gatewayManager struct {
 func (p *Provider) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 	mgr := &gatewayManager{
 		provider: p,
-		session:  &sessionState{},
+		session: &sessionState{
+			backoff: 1 * time.Second,
+		},
 	}
 
 	return mgr.run(ctx, out)
 }
 
 func (m *gatewayManager) run(ctx context.Context, out chan<- *hermes.Message) error {
-	backoff := 1 * time.Second
-
 	for {
 		err := m.connectAndRead(ctx, out)
 
@@ -68,13 +74,13 @@ func (m *gatewayManager) run(ctx context.Context, out chan<- *hermes.Message) er
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(backoff):
-				if backoff < 60*time.Second {
-					backoff *= 2
+			case <-time.After(m.session.backoff):
+				if m.session.isBackoffUnder(60 * time.Second) {
+					m.session.backoff *= 2
 				}
 			}
 		} else {
-			backoff = 1 * time.Second
+			m.session.backoff = 1 * time.Second
 		}
 	}
 }
