@@ -87,16 +87,14 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*h
 	endpoint, payload := p.buildPayload(req)
 
 	for range p.maxRetries {
-		tgResp, err := p.postToTelegram(ctx, endpoint, payload)
+		tgResp, err := p.makeRequest(ctx, endpoint, payload)
 		if err != nil {
 			tgError, ok := errors.AsType[*tgError](err)
 			if ok && tgError.RetryAfter > 0 {
-				timer := time.NewTimer(tgError.RetryAfter)
 				select {
 				case <-ctx.Done():
-					timer.Stop()
 					return nil, ctx.Err()
-				case <-timer.C:
+				case <-time.After(tgError.RetryAfter):
 					continue
 				}
 			}
@@ -122,16 +120,14 @@ func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, re
 	}
 
 	for range p.maxRetries {
-		tgResp, err := p.postToTelegram(ctx, "editMessageText", payload)
+		tgResp, err := p.makeRequest(ctx, "editMessageText", payload)
 		if err != nil {
 			tgError, ok := errors.AsType[*tgError](err)
 			if ok && tgError.RetryAfter > 0 {
-				timer := time.NewTimer(tgError.RetryAfter)
 				select {
 				case <-ctx.Done():
-					timer.Stop()
 					return nil, ctx.Err()
-				case <-timer.C:
+				case <-time.After(tgError.RetryAfter):
 					continue
 				}
 			}
@@ -158,7 +154,7 @@ func (p *Poller) SendAction(ctx context.Context, req hermes.ActionRequest) error
 		"action":  mapAction(req.Action),
 	}
 
-	_, err := p.postToTelegram(ctx, "sendChatAction", payload)
+	_, err := p.makeRequest(ctx, "sendChatAction", payload)
 	return err
 }
 
@@ -410,20 +406,11 @@ func (p *Poller) buildMediaGroup(req hermes.MessageRequest) []map[string]any {
 	return group
 }
 
-func (p *Poller) postToTelegram(ctx context.Context, method string, payload any) (*tgSendResponse, error) {
-	url := fmt.Sprintf(p.baseURL, p.token, method)
-	body, err := json.Marshal(payload)
+func (p *Poller) makeRequest(ctx context.Context, method string, payload any) (*tgSendResponse, error) {
+	req, err := p.newRequest(ctx, method, payload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal telegram payload: %w", err)
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create send request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", hermes.UserAgent())
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -450,4 +437,22 @@ func (p *Poller) postToTelegram(ctx context.Context, method string, payload any)
 	}
 
 	return &tgResp, nil
+}
+
+func (p *Poller) newRequest(ctx context.Context, method string, payload any) (*http.Request, error) {
+	url := fmt.Sprintf(p.baseURL, p.token, method)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal telegram payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create send request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", hermes.UserAgent())
+
+	return req, nil
 }
