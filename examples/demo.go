@@ -10,22 +10,20 @@ import (
 	"time"
 
 	"github.com/gargalloeric/hermes"
-	"github.com/gargalloeric/hermes/providers/discord"
+	"github.com/gargalloeric/hermes/providers/telegram"
 )
 
 func main() {
-	token := os.Getenv("DISCORD_TOKEN")
+	token := os.Getenv("TELEGRAM_TOKEN")
 	if token == "" {
-		log.Fatal("Set DISCORD_TOKEN environment variable")
+		log.Fatal("Set TELEGRAM_TOKEN environment variable")
 	}
 
 	// Initialize a provider, e.g. Telegram
-	// tg := telegram.NewPoller(token)
-
-	ds := discord.New(token)
+	tg := telegram.NewPoller(token)
 
 	// Initialize the client with the providers.
-	client := hermes.New(hermes.WithProvider(ds))
+	client := hermes.New(hermes.WithProvider(tg))
 
 	client.OnCommand("/ping", func(c *hermes.Context) {
 		// Standard send
@@ -34,13 +32,13 @@ func main() {
 
 	client.OnCommand("/quote", func(c *hermes.Context) {
 		// Send as a formal reply/quote
-		c.Send("This message formally quotes your command.", hermes.AsReply())
+		c.Reply("This message formally quotes your command.")
 	})
 
 	// React to images messages
 	client.OnImage(func(c *hermes.Context) {
 		imageID := c.Message.Attachments[0].ID
-		c.Send(fmt.Sprintf("I see your image! Internal ID: %s", imageID), hermes.AsReply())
+		c.Reply(fmt.Sprintf("I see your image! Internal ID: %s", imageID))
 	})
 
 	// Send images to the chat
@@ -72,12 +70,11 @@ func main() {
 		img2 := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
 		img3 := "https://w.wallhaven.cc/full/5y/wallhaven-5y5537.png"
 
-		c.Send(
+		c.Reply(
 			"Look at this pack of images",
 			hermes.WithImage(img1),
 			hermes.WithImage(img2),
 			hermes.WithImage(img3),
-			hermes.AsReply(),
 		)
 	})
 
@@ -87,12 +84,11 @@ func main() {
 		doc2 := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
 		doc3 := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
 
-		c.Send(
+		c.Reply(
 			"Look at this pack of documents",
 			hermes.WithDocument(doc1),
 			hermes.WithDocument(doc2),
 			hermes.WithDocument(doc3),
-			hermes.AsReply(),
 		)
 	})
 

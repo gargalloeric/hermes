@@ -34,10 +34,6 @@ func (c *Context) Send(text string, opts ...SendOption) (*SentMessage, error) {
 		opt(options)
 	}
 
-	if options.IsReply {
-		req.ReplyToID = c.Message.ID
-	}
-
 	req.Attachments = options.Attachments
 
 	return c.provider.SendMessage(c.ctx, req)
@@ -48,6 +44,24 @@ func (c *Context) SendTo(id string, text string, opts ...SendOption) (*SentMessa
 	req := MessageRequest{
 		RecipientID: id,
 		Text:        text,
+	}
+
+	options := &SendOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	req.Attachments = options.Attachments
+
+	return c.provider.SendMessage(c.ctx, req)
+}
+
+// Reply replies to a message in a chat quoting the message.
+func (c *Context) Reply(text string, opts ...SendOption) (*SentMessage, error) {
+	req := MessageRequest{
+		RecipientID: c.Message.ChatID,
+		Text:        text,
+		ReplyToID:   c.Message.ID,
 	}
 
 	options := &SendOptions{}
