@@ -234,9 +234,11 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 	m := &hermes.Message{
 		ID:       strconv.Itoa(u.Message.MessageID),
 		Platform: p.Name(),
+		ChatID:   strconv.FormatInt(u.Message.Chat.ID, 10),
 		Sender: hermes.User{
 			ID:       strconv.FormatInt(u.Message.From.ID, 10),
 			Username: u.Message.From.Username,
+			IsBot:    u.Message.From.IsBot,
 		},
 		Text: u.Message.Text,
 		Type: hermes.TypeText,
@@ -252,6 +254,7 @@ func (p *Poller) mapToHermes(u tgUpdate) *hermes.Message {
 
 	m.Metadata = map[string]any{
 		"raw_update_id": u.UpdateID,
+		"chat_type":     u.Message.Chat.Type,
 	}
 
 	return m
@@ -280,6 +283,7 @@ func (p *Poller) mapMultimedia(tm *tgMessage, hm *hermes.Message) {
 		hm.Attachments = append(hm.Attachments, hermes.Attachment{
 			Type:     hermes.AttachmentFile,
 			ID:       tm.Document.FileID,
+			FileName: tm.Document.FileName,
 			MimeType: tm.Document.MimeType,
 		})
 	} else if tm.Location != nil {

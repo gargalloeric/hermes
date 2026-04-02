@@ -22,6 +22,7 @@ type tgUpdate struct {
 type tgMessage struct {
 	MessageID int           `json:"message_id"`
 	From      tgUser        `json:"from"`
+	Chat      tgChat        `json:"chat"`
 	Text      string        `json:"text"`
 	Caption   string        `json:"caption"`
 	Photo     []tgPhotoSize `json:"photo"`
@@ -38,6 +39,7 @@ type tgMessage struct {
 type tgUser struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
+	IsBot    bool   `json:"is_bot"`
 }
 
 type tgPhotoSize struct {
@@ -63,6 +65,12 @@ type tgVoice struct {
 type tgLocation struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+}
+
+type tgChat struct {
+	ID    int64  `json:"id"`
+	Type  string `json:"type"` // "private", "group", "supergroup", or "channel"
+	Title string `json:"title,omitempty"`
 }
 
 type tgSendResponse struct {

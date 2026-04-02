@@ -43,12 +43,14 @@ const (
 type User struct {
 	ID       string
 	Username string
+	IsBot    bool
 }
 
 // Attachment represents a media file or document associated with a message.
 type Attachment struct {
 	Type     AttachmentType
 	URL      string
+	FileName string
 	ID       string // Platform-specific file reference
 	MimeType string
 }
@@ -61,9 +63,10 @@ type SystemEvent struct {
 
 // Message represents a universal chat message, abstracted from platform-specific details.
 type Message struct {
-	ID          string         // Unique identifier for the message on the platform.
-	Platform    string         // The name of the provider (e.g., "telegram", "discord").
-	Sender      User           // The user who sent the message.
+	ID          string // Unique identifier for the message on the platform.
+	Platform    string // The name of the provider (e.g., "telegram", "discord").
+	Sender      User   // The user who sent the message.
+	ChatID      string
 	Text        string         // The text content or caption of the message.
 	Type        MessageType    // The category of the message (Text, Image, Event, etc...).
 	Attachments []Attachment   // List of files associated with this message

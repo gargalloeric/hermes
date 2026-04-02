@@ -51,7 +51,7 @@ func main() {
 
 ## Features
 
-- **Multiplatform:** Write once, deploy to Telegram, Discord(soon) and more.
+- **Multiplatform:** Write once, deploy to Telegram, Discord and more.
 - **Unified Context:** Simple `c.Send()` and `c.SendTo()` methods regardless of the platform.
 - **Concurrent by Design:** Every incoming message is handled in its own goroutine.
 - **Logic Gates:** Combine matchers with `And()` or `Or()`. 
@@ -62,7 +62,7 @@ func main() {
 |----------|---------|-----------|
 | Telegram | Long Polling | ✅ Active|
 | Telegram | Webhook | 🏗️ Planned |
-| Discord  | WebSockets | 🏗️ Planned |
+| Discord  | WebSockets | ✅ Active |
 
 ## Advance Routing
 

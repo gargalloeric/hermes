@@ -25,7 +25,7 @@ func NewContext(ctx context.Context, p Provider, msg *Message) *Context {
 // Send sends a message back to the same chat where the original message originated.
 func (c *Context) Send(text string, opts ...SendOption) (*SentMessage, error) {
 	req := MessageRequest{
-		RecipientID: c.Message.Sender.ID,
+		RecipientID: c.Message.ChatID,
 		Text:        text,
 	}
 
@@ -80,7 +80,7 @@ func (c *Context) Edit(target *SentMessage, text string) (*SentMessage, error) {
 // It returns a function that, when called, stops the activity.
 func (c *Context) Action(a ActionType) func() {
 	req := ActionRequest{
-		RecipientID: c.Message.Sender.ID,
+		RecipientID: c.Message.ChatID,
 		Action:      a,
 	}
 	c.provider.SendAction(c.ctx, req)
