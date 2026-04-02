@@ -13,7 +13,7 @@ import (
 	"github.com/gargalloeric/hermes"
 )
 
-func TestProvider_SendMessage(t *testing.T) {
+func TestDiscord_SendMessage(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorization := r.Header.Get("Authorization")
 		if authorization != "Bot fake-token" {
@@ -55,7 +55,7 @@ func TestProvider_SendMessage(t *testing.T) {
 	}
 }
 
-func TestProvider_Mapping(t *testing.T) {
+func TestDiscord_Mapping(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    dsMessage
@@ -143,7 +143,7 @@ func TestProvider_Mapping(t *testing.T) {
 
 }
 
-func TestProvider_ResolveAttachmentType(t *testing.T) {
+func TestDiscord_ResolveAttachmentType(t *testing.T) {
 	tests := []struct {
 		name     string
 		mime     string
@@ -223,7 +223,7 @@ func TestProvider_ResolveAttachmentType(t *testing.T) {
 	}
 }
 
-func TestProvider_Listen(t *testing.T) {
+func TestDiscord_Listen(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -300,7 +300,7 @@ func TestProvider_Listen(t *testing.T) {
 	}
 }
 
-func TestProvider_GatewayResumption(t *testing.T) {
+func TestDiscord_Gateway_Resumption(t *testing.T) {
 	connCount := 0
 	sessionID := "fake_session_123"
 
@@ -354,7 +354,7 @@ func TestProvider_GatewayResumption(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 }
 
-func TestProvider_SendMessage_RateLimitRetry(t *testing.T) {
+func TestDiscord_SendMessage_RateLimitRetry(t *testing.T) {
 	attempts := 0
 	retryDuration := 100 * time.Millisecond
 
@@ -411,7 +411,7 @@ func TestProvider_SendMessage_RateLimitRetry(t *testing.T) {
 	}
 }
 
-func TestProvider_SendMessage_Multipart(t *testing.T) {
+func TestDiscord_SendMessage_Multipart(t *testing.T) {
 	fileContent := []byte("fake-file-binary-data")
 	fileHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(fileContent)

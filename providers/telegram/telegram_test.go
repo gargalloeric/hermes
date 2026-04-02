@@ -1,16 +1,181 @@
 package telegram
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/gargalloeric/hermes"
 )
+
+func TestTelegram_MapToHermes(t *testing.T) {
+	p := NewPoller("fake-token")
+
+	tests := []struct {
+		name     string
+		input    tgUpdate
+		validate func(*testing.T, *hermes.Message)
+	}{
+		{
+			name: "Simple Text Message",
+			input: tgUpdate{
+				Message: &tgMessage{
+					MessageID: 1,
+					From:      tgUser{ID: 123, Username: "hermes"},
+					Text:      "Hello",
+				},
+			},
+			validate: func(t *testing.T, m *hermes.Message) {
+				if m.Text != "Hello" || m.Type != hermes.TypeText {
+					t.Errorf("expected text 'Hello', got %s", m.Text)
+				}
+			},
+		},
+		{
+			name: "Photo with Caption (Highest Res)",
+			input: tgUpdate{
+				Message: &tgMessage{
+					Caption: "Look at this!",
+					Photo: []tgPhotoSize{
+						{FileID: "low-res"},
+						{FileID: "high-res"},
+					},
+				},
+			},
+			validate: func(t *testing.T, m *hermes.Message) {
+				if m.Type != hermes.TypeImage || m.Text != "Look at this!" {
+					t.Error("failed to map image or caption")
+				}
+				if m.Attachments[0].ID != "high-res" {
+					t.Errorf("expected highest resolution 'high-res', got %s", m.Attachments[0].ID)
+				}
+			},
+		},
+		{
+			name: "User Joined Event",
+			input: tgUpdate{
+				Message: &tgMessage{
+					NewChatMembers: []tgUser{{ID: 456, Username: "Hermes"}},
+				},
+			},
+			validate: func(t *testing.T, m *hermes.Message) {
+				if m.Type != hermes.TypeEvent || m.Event.Type != hermes.EventUserJoined {
+					t.Error("failed to map join event")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := p.mapToHermes(tc.input)
+			if msg == nil {
+				t.Fatal("expected message, got nil!")
+			}
+
+			tc.validate(t, msg)
+		})
+	}
+}
+
+func TestTelegram_Polling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := NewPoller("fake-token")
+		p.backoff = 5 * time.Second
+
+		var wg sync.WaitGroup
+		pollCount := 0
+
+		p.client.Transport = &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				pollCount++
+				if pollCount == 1 {
+					// Return 1 message immediately
+					json := `{"ok": true, "result": [{"update_id": 100, "message": {"text": "hi"}}]}`
+					return &http.Response{
+						StatusCode: 200,
+						Body:       io.NopCloser(strings.NewReader(json)),
+					}, nil
+				}
+				// Subsequent calls block to simulate long polling
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			},
+		}
+
+		out := make(chan *hermes.Message, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = p.Listen(ctx, out)
+		}()
+
+		// synctest.Wait() will:
+		// 1. Run the first poll.
+		// 2. See the message is sent.
+		// 3. See the Listen loop hit timer.Reset(0) and loop again.
+		// 4. See the second poll block in the mockTransport.
+		// 5. Unblock the test.
+		synctest.Wait()
+
+		msg := <-out
+		if msg.Text != "hi" {
+			t.Errorf("expected hi, got %s", msg.Text)
+		}
+
+		cancel()
+		wg.Wait()
+	})
+}
+
+func TestTelegram_SendMessage_CancelledDurationRateLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := NewPoller("fake-token")
+
+		p.client.Transport = &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				// Simulate a massive 60-second rate limit penalty
+				jsonPayload := `{"ok": false, "error_code": 429, "description": "Too Many Requests", "parameters": {"retry_after": 60}}`
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(strings.NewReader(jsonPayload)),
+					Header:     make(http.Header),
+				}, nil
+			},
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+
+		// Schedule the cancellation to happen exactly 1 synthetic second from now.
+		// This simulates a system shutdown occurring while the goroutine is sleeping.
+		time.AfterFunc(1*time.Second, cancel)
+
+		start := time.Now()
+
+		req := hermes.MessageRequest{Text: "Cancel me!"}
+		_, err := p.SendMessage(ctx, req)
+
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled error, got: %v", err)
+		}
+
+		// Validate that we only waited for 1 second, NOT 60 seconds.
+		// If the context cancellation failed, this would be 60s.
+		elapsed := time.Since(start)
+		if elapsed != 1*time.Second {
+			t.Errorf("expected synthetic time to advance exactly 1s, got %v", elapsed)
+		}
+	})
+}
 
 type mockTransport struct {
 	roundTripFunc func(*http.Request) (*http.Response, error)
@@ -20,7 +185,7 @@ func (mt *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return mt.roundTripFunc(req)
 }
 
-func TestSendMessage_Network(t *testing.T) {
+func TestTelegram_SendMessage_Network(t *testing.T) {
 	tests := []struct {
 		name           string
 		status         int
@@ -75,7 +240,7 @@ func TestSendMessage_Network(t *testing.T) {
 	}
 }
 
-func TestEditMessage_Network(t *testing.T) {
+func TestTelegram_EditMessage_Network(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/botfake-token/editMessageText" {
 			t.Errorf("expected editMessageText endpoint, got %s", r.URL.Path)
@@ -98,7 +263,7 @@ func TestEditMessage_Network(t *testing.T) {
 	}
 }
 
-func TestSendMessage_Routing(t *testing.T) {
+func TestTelegram_SendMessage_Routing(t *testing.T) {
 	tests := []struct {
 		name             string
 		req              hermes.MessageRequest
@@ -150,7 +315,7 @@ func TestSendMessage_Routing(t *testing.T) {
 	}
 }
 
-func TestSendMessage_RateLimit(t *testing.T) {
+func TestTelegram_SendMessage_RateLimit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := NewPoller("fake-token")
 
