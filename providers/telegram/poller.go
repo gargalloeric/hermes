@@ -84,7 +84,7 @@ func (p *Poller) Listen(ctx context.Context, out chan<- *hermes.Message) error {
 }
 
 func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	endpoint, payload := p.buildPayload(req)
+	endpoint, payload := p.buildSendPayload(req)
 
 	for range p.maxRetries {
 		tgResp, err := p.makeRequest(ctx, endpoint, payload)
@@ -113,14 +113,10 @@ func (p *Poller) SendMessage(ctx context.Context, req hermes.MessageRequest) (*h
 
 // Note: Telegram only allows editing messages sent by the bot within the last 48 hours.
 func (p *Poller) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	payload := map[string]any{
-		"chat_id":    target.ChatID,
-		"message_id": target.ID,
-		"text":       req.Text,
-	}
+	endpoint, payload := p.buildEditPayload(target, req)
 
 	for range p.maxRetries {
-		tgResp, err := p.makeRequest(ctx, "editMessageText", payload)
+		tgResp, err := p.makeRequest(ctx, endpoint, payload)
 		if err != nil {
 			tgError, ok := errors.AsType[*tgError](err)
 			if ok && tgError.RetryAfter > 0 {
@@ -156,6 +152,16 @@ func (p *Poller) SendAction(ctx context.Context, req hermes.ActionRequest) error
 
 	_, err := p.makeRequest(ctx, "sendChatAction", payload)
 	return err
+}
+
+func (p *Poller) buildEditPayload(target *hermes.SentMessage, req hermes.MessageRequest) (string, map[string]any) {
+	payload := map[string]any{
+		"chat_id":    target.ChatID,
+		"message_id": target.ID,
+		"text":       req.Text,
+	}
+
+	return "editMessageText", payload
 }
 
 func mapAction(action hermes.ActionType) string {
@@ -310,7 +316,7 @@ func (p *Poller) mapSystemEvents(tm *tgMessage, hm *hermes.Message) {
 	}
 }
 
-func (p *Poller) buildPayload(req hermes.MessageRequest) (string, map[string]any) {
+func (p *Poller) buildSendPayload(req hermes.MessageRequest) (string, map[string]any) {
 	// Handle simple text
 	if len(req.Attachments) == 0 {
 		return p.handleOnlyText(req)
