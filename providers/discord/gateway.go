@@ -227,17 +227,7 @@ func (m *gatewayManager) identify(ctx context.Context, conn *websocket.Conn) err
 		},
 	}
 
-	data, err := json.Marshal(id)
-	if err != nil {
-		return fmt.Errorf("failed to marshal gateway identity: %w", err)
-	}
-
-	payload, err := json.Marshal(dsPayload{Op: dsOpIdentify, D: data})
-	if err != nil {
-		return fmt.Errorf("failed to marshal gateway payload: %w", err)
-	}
-
-	return conn.Write(ctx, websocket.MessageText, payload)
+	return m.provider.writePayload(ctx, conn, dsOpIdentify, id)
 }
 
 // startHeartbeat manages the periodic pinging of the Discord Gateway.
