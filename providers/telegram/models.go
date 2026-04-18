@@ -110,3 +110,20 @@ type apiError struct {
 func (e *apiError) Error() string {
 	return fmt.Sprintf("telegram api error: %s", e.Message)
 }
+
+type payload struct {
+	ChatID           string         `json:"chat_id"`
+	Text             string         `json:"text,omitempty"`
+	ReplyToMessageID string         `json:"reply_to_message_id,omitempty"`
+	Caption          string         `json:"caption,omitempty"`
+	Photo            string         `json:"photo,omitempty"`
+	Video            string         `json:"video,omitempty"`
+	Document         string         `json:"document,omitempty"`
+	Media            []payloadMedia `json:"media,omitempty"`
+}
+
+type payloadMedia struct {
+	Media   string `json:"media"`
+	Type    string `json:"type"`
+	Caption string `json:"caption,omitempty"`
+}
