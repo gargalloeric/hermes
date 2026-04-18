@@ -20,7 +20,7 @@ func main() {
 	}
 
 	// Initialize a provider, e.g. Telegram
-	tg := telegram.NewPoller(token)
+	tg := telegram.New(token)
 
 	// Initialize the client with the providers.
 	client := hermes.New(hermes.WithProvider(tg))
