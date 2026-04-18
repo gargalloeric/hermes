@@ -22,7 +22,7 @@ type parameters struct {
 // update represents an update from the Telegram API.
 type update struct {
 	UpdateID int      `json:"update_id"`
-	Message  *message `json:"message"`
+	Message  *message `json:"message,omitempty"`
 }
 
 // message represents a message sent by a User.
@@ -37,6 +37,10 @@ type message struct {
 	Document  *document   `json:"document"`
 	Voice     *voice      `json:"voice"`
 	Location  *location   `json:"location"`
+
+	// Events
+	NewChatMembers []user `json:"new_chat_members,omitempty"`
+	LeftChatMember *user  `json:"left_chat_member,omitempty"`
 }
 
 // user represents a Telegram user.
@@ -98,11 +102,11 @@ type location struct {
 	Longitude float64 `json:"longitude"`
 }
 
-type tgError struct {
+type apiError struct {
 	Message    string
 	RetryAfter time.Duration
 }
 
-func (e *tgError) Error() string {
+func (e *apiError) Error() string {
 	return fmt.Sprintf("telegram api error: %s", e.Message)
 }
