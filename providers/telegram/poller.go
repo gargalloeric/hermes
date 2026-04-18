@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/gargalloeric/hermes"
 )
 
 const (
@@ -87,6 +89,7 @@ func (p *pollerReceiver) getUpdates(ctx context.Context) ([]update, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create polling request: %w", err)
 	}
+	req.Header.Set("User-Agent", hermes.UserAgent())
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -112,7 +115,7 @@ func (p *pollerReceiver) wrapErrResponse(resp response) error {
 		retryAfter = resp.Parameters.RetryAfter
 	}
 
-	return &tgError{
+	return &apiError{
 		Message:    resp.Description,
 		RetryAfter: time.Duration(retryAfter) * time.Second,
 	}
@@ -130,7 +133,7 @@ func (p *pollerReceiver) buildEndpoint() string {
 }
 
 func (p *pollerReceiver) calculateBackoff(err error, fails int) time.Duration {
-	tgError, ok := errors.AsType[*tgError](err)
+	tgError, ok := errors.AsType[*apiError](err)
 	if ok && tgError.RetryAfter > 0 {
 		return tgError.RetryAfter
 	}
