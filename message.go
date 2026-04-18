@@ -27,9 +27,8 @@ const (
 type EventType string
 
 const (
-	EventUserJoined  EventType = "user_joined"
-	EventUserLeft    EventType = "user_left"
-	EventMessageEdit EventType = "message_edited"
+	EventUserJoined EventType = "user_joined"
+	EventUserLeft   EventType = "user_left"
 )
 
 // ActionType defines the specific action to show in the platform UI.
