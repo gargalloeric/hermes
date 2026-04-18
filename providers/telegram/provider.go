@@ -13,7 +13,7 @@ const (
 
 // Telgram serves as the communication bridge between Hermes code and the Telegram provider.
 type Telegram struct {
-	receiver MessageReceiver
+	receiver UpdateReceiver
 }
 
 func New(token string) *Telegram {
@@ -43,7 +43,10 @@ func (t *Telegram) Listen(ctx context.Context, out chan<- *hermes.Message) error
 			if !ok {
 				return nil
 			}
-			out <- t.mapToHermes(upd)
+
+			if msg := t.mapUpdateToMessage(upd); msg != nil {
+				out <- msg
+			}
 		}
 	}
 }
@@ -61,9 +64,5 @@ func (t *Telegram) ActionTimeout() time.Duration {
 }
 
 func (t *Telegram) SendAction(ctx context.Context, req hermes.ActionRequest) error {
-	return nil
-}
-
-func (t *Telegram) mapToHermes(upd update) *hermes.Message {
 	return nil
 }
