@@ -102,6 +102,7 @@ type location struct {
 	Longitude float64 `json:"longitude"`
 }
 
+// apiError represents a Telegram provider error.
 type apiError struct {
 	Message    string
 	RetryAfter time.Duration
@@ -111,6 +112,7 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("telegram api error: %s", e.Message)
 }
 
+// payload is the data payload sent to the Telegram API.
 type payload struct {
 	ChatID           string         `json:"chat_id"`
 	Text             string         `json:"text,omitempty"`
@@ -122,6 +124,7 @@ type payload struct {
 	Media            []payloadMedia `json:"media,omitempty"`
 }
 
+// payloadMedia represents a media element of the payload sent to the Telegram API.
 type payloadMedia struct {
 	Media   string `json:"media"`
 	Type    string `json:"type"`
