@@ -1,6 +1,11 @@
 package telegram
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -21,12 +26,67 @@ type sendRequest struct {
 
 func newSender(token string) *sender {
 	return &sender{
-		token: token,
+		token: "bot" + token,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 		maxRetries: 2,
 	}
+}
+
+func (s *sender) executeWithRetry(ctx context.Context, endpoint, method string, payload payload) (*message, error) {
+	target := fmt.Sprintf("%s/%s/%s", apiBase, s.token, endpoint)
+	for range s.maxRetries {
+		msg, err := s.makeRequest(ctx, target, method, payload)
+		if err != nil {
+			apiErr, ok := errors.AsType[*apiError](err)
+			if ok && apiErr.RetryAfter > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(apiErr.RetryAfter):
+					continue
+				}
+			}
+			return nil, err
+		}
+
+		return msg, nil
+	}
+
+	return nil, fmt.Errorf("failed to send message after %d retries", s.maxRetries)
+}
+
+func (s *sender) makeRequest(ctx context.Context, endpoint, method string, payload payload) (*message, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", hermes.UserAgent())
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to perform http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var apiResp postResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	if !apiResp.Ok {
+		return nil, wrapErrResponse(apiResp.Parameters, apiResp.Description)
+	}
+
+	return apiResp.Result, nil
 }
 
 func buildSendPayload(req hermes.MessageRequest) sendRequest {

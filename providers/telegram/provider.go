@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gargalloeric/hermes"
@@ -54,7 +56,18 @@ func (t *Telegram) Listen(ctx context.Context, out chan<- *hermes.Message) error
 }
 
 func (t *Telegram) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	return nil, nil
+	sendReq := buildSendPayload(req)
+
+	msg, err := t.sender.executeWithRetry(ctx, sendReq.endpoint, http.MethodPost, sendReq.payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &hermes.SentMessage{
+		ID:       strconv.Itoa(msg.MessageID),
+		Platform: t.Name(),
+		ChatID:   strconv.FormatInt(msg.Chat.ID, 10),
+	}, nil
 }
 
 func (t *Telegram) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
