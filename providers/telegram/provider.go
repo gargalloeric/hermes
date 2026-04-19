@@ -47,7 +47,7 @@ func (t *Telegram) Listen(ctx context.Context, out chan<- *hermes.Message) error
 				return nil
 			}
 
-			if msg := t.mapUpdateToMessage(upd); msg != nil {
+			if msg := mapUpdateToMessage(t.Name(), upd); msg != nil {
 				out <- msg
 			}
 		}

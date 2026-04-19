@@ -7,14 +7,14 @@ import (
 	"github.com/gargalloeric/hermes"
 )
 
-func (t *Telegram) mapUpdateToMessage(u update) *hermes.Message {
+func mapUpdateToMessage(platform string, u update) *hermes.Message {
 	if u.Message == nil {
 		return nil
 	}
 
 	m := &hermes.Message{
 		ID:       strconv.Itoa(u.Message.MessageID),
-		Platform: t.Name(),
+		Platform: platform,
 		ChatID:   strconv.FormatInt(u.Message.Chat.ID, 10),
 		Sender: hermes.User{
 			ID:       strconv.FormatInt(u.Message.From.ID, 10),
