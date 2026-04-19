@@ -28,7 +28,7 @@ type update struct {
 // message represents a message sent by a User.
 type message struct {
 	MessageID int         `json:"message_id"`
-	From      *user       `json:"user"`
+	From      *user       `json:"from"`
 	Chat      *chat       `json:"chat"`
 	Text      string      `json:"text"`
 	Caption   string      `json:"caption"`
@@ -129,4 +129,12 @@ type payloadMedia struct {
 	Media   string `json:"media"`
 	Type    string `json:"type"`
 	Caption string `json:"caption,omitempty"`
+}
+
+// postResponse represents the aknowledgement response for a sent message.
+type postResponse struct {
+	Ok          bool        `json:"ok"`
+	Result      *message    `json:"result,omitempty"`
+	Description string      `json:"description,omitempty"`
+	Parameters  *parameters `json:"parameters,omitempty"`
 }
