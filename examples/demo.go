@@ -58,10 +58,7 @@ func main() {
 	client.OnCommand("/report", func(c *hermes.Context) {
 		reportURL := "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
 
-		_, err := c.Send("Here is the requested document.", hermes.WithDocument(reportURL))
-		if err != nil {
-			log.Printf("failed reporting: %s", err)
-		}
+		c.Send("Here is the requested document.", hermes.WithDocument(reportURL))
 	})
 
 	// Send multiple images to the chat

@@ -70,7 +70,22 @@ func (t *Telegram) SendMessage(ctx context.Context, req hermes.MessageRequest) (
 }
 
 func (t *Telegram) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	return nil, nil
+	payload := payload{
+		ChatID:    target.ChatID,
+		MessageID: target.ID,
+		Text:      req.Text,
+	}
+
+	msg, err := t.sender.execute(ctx, "editMessageText", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &hermes.SentMessage{
+		ID:       strconv.Itoa(msg.MessageID),
+		Platform: t.Name(),
+		ChatID:   strconv.FormatInt(msg.Chat.ID, 10),
+	}, nil
 }
 
 func (t *Telegram) ActionTimeout() time.Duration {
