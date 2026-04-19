@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -134,8 +135,8 @@ type payloadMedia struct {
 
 // postResponse represents the aknowledgement response for a sent message.
 type postResponse struct {
-	Ok          bool        `json:"ok"`
-	Result      *message    `json:"result,omitempty"`
-	Description string      `json:"description,omitempty"`
-	Parameters  *parameters `json:"parameters,omitempty"`
+	Ok          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Parameters  *parameters     `json:"parameters,omitempty"`
 }

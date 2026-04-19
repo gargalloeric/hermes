@@ -34,36 +34,41 @@ func newSender(token string) *sender {
 	}
 }
 
-func (s *sender) executeWithRetry(ctx context.Context, endpoint, method string, payload payload) (*message, error) {
-	target := fmt.Sprintf("%s/%s/%s", apiBase, s.token, endpoint)
-	for range s.maxRetries {
-		msg, err := s.makeRequest(ctx, target, method, payload)
-		if err != nil {
-			apiErr, ok := errors.AsType[*apiError](err)
-			if ok && apiErr.RetryAfter > 0 {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(apiErr.RetryAfter):
-					continue
-				}
-			}
-			return nil, err
-		}
-
-		return msg, nil
-	}
-
-	return nil, fmt.Errorf("failed to send message after %d retries", s.maxRetries)
+func (s *sender) execute(ctx context.Context, endpoint string, payload payload) (*message, error) {
+	return executeWithRetry[*message](ctx, s, endpoint, payload)
 }
 
-func (s *sender) makeRequest(ctx context.Context, endpoint, method string, payload payload) (*message, error) {
+func executeWithRetry[T any](ctx context.Context, s *sender, endpoint string, payload payload) (T, error) {
+	var result T
+	var target string = fmt.Sprintf("%s/%s/%s", apiBase, s.token, endpoint)
+
+	for range s.maxRetries {
+		msg, err := makeRequest(ctx, s, target, payload)
+		if err == nil {
+			err = json.Unmarshal(msg.Result, &result)
+			return result, err
+		}
+
+		apiErr, ok := errors.AsType[*apiError](err)
+		if !ok || apiErr.RetryAfter <= 0 {
+			return result, nil
+		}
+
+		if err := wait(ctx, apiErr.RetryAfter); err != nil {
+			return result, err
+		}
+	}
+
+	return result, fmt.Errorf("failed to send message after %d retries", s.maxRetries)
+}
+
+func makeRequest(ctx context.Context, s *sender, endpoint string, payload payload) (*postResponse, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
@@ -86,7 +91,7 @@ func (s *sender) makeRequest(ctx context.Context, endpoint, method string, paylo
 		return nil, wrapErrResponse(apiResp.Parameters, apiResp.Description)
 	}
 
-	return apiResp.Result, nil
+	return &apiResp, nil
 }
 
 func buildSendPayload(req hermes.MessageRequest) sendRequest {

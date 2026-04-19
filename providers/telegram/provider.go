@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -58,7 +57,7 @@ func (t *Telegram) Listen(ctx context.Context, out chan<- *hermes.Message) error
 func (t *Telegram) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	sendReq := buildSendPayload(req)
 
-	msg, err := t.sender.executeWithRetry(ctx, sendReq.endpoint, http.MethodPost, sendReq.payload)
+	msg, err := t.sender.execute(ctx, sendReq.endpoint, sendReq.payload)
 	if err != nil {
 		return nil, err
 	}
@@ -79,5 +78,11 @@ func (t *Telegram) ActionTimeout() time.Duration {
 }
 
 func (t *Telegram) SendAction(ctx context.Context, req hermes.ActionRequest) error {
-	return nil
+	payload := payload{
+		ChatID: req.RecipientID,
+		Action: mapAction(req.Action),
+	}
+
+	_, err := executeWithRetry[bool](ctx, t.sender, "sendChatAction", payload)
+	return err
 }
