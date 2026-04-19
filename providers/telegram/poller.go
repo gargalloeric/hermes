@@ -52,7 +52,7 @@ func (p *pollerReceiver) Start(ctx context.Context) error {
 			failCount++
 			delay := p.calculateBackoff(err, failCount)
 
-			if err := p.wait(ctx, delay); err != nil {
+			if err := wait(ctx, delay); err != nil {
 				return err
 			}
 			continue
@@ -69,7 +69,7 @@ func (p *pollerReceiver) Start(ctx context.Context) error {
 		}
 
 		if len(updates) == 0 {
-			if err := p.wait(ctx, p.backoff); err != nil {
+			if err := wait(ctx, p.backoff); err != nil {
 				return err
 			}
 		}
@@ -103,22 +103,10 @@ func (p *pollerReceiver) getUpdates(ctx context.Context) ([]update, error) {
 	}
 
 	if !apiResp.Ok {
-		return nil, p.wrapErrResponse(apiResp)
+		return nil, wrapErrResponse(apiResp.Parameters, apiResp.Description)
 	}
 
 	return apiResp.Result, nil
-}
-
-func (p *pollerReceiver) wrapErrResponse(resp response) error {
-	retryAfter := 0
-	if resp.Parameters != nil {
-		retryAfter = resp.Parameters.RetryAfter
-	}
-
-	return &apiError{
-		Message:    resp.Description,
-		RetryAfter: time.Duration(retryAfter) * time.Second,
-	}
 }
 
 func (p *pollerReceiver) buildEndpoint() string {
@@ -146,7 +134,7 @@ func (p *pollerReceiver) calculateBackoff(err error, fails int) time.Duration {
 	return delay
 }
 
-func (p pollerReceiver) wait(ctx context.Context, delay time.Duration) error {
+func wait(ctx context.Context, delay time.Duration) error {
 	if delay == 0 {
 		return nil
 	}
@@ -159,5 +147,17 @@ func (p pollerReceiver) wait(ctx context.Context, delay time.Duration) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func wrapErrResponse(p *parameters, description string) *apiError {
+	retryAfter := 0
+	if p != nil {
+		retryAfter = p.RetryAfter
+	}
+
+	return &apiError{
+		Message:    description,
+		RetryAfter: time.Duration(retryAfter) * time.Second,
 	}
 }
