@@ -103,3 +103,14 @@ func mapEvent(um *message, hm *hermes.Message) bool {
 
 	return false
 }
+
+func mapAction(a hermes.ActionType) string {
+	switch a {
+	case hermes.ActionTyping:
+		return "typing"
+	case hermes.ActionRecordVoice:
+		return "record_voice"
+	default:
+		return "typing"
+	}
+}

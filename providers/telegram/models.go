@@ -122,6 +122,7 @@ type payload struct {
 	Video            string         `json:"video,omitempty"`
 	Document         string         `json:"document,omitempty"`
 	Media            []payloadMedia `json:"media,omitempty"`
+	Action           string         `json:"action,omitempty"`
 }
 
 // payloadMedia represents a media element of the payload sent to the Telegram API.

@@ -35,7 +35,8 @@ const (
 type ActionType string
 
 const (
-	ActionTyping ActionType = "typing"
+	ActionTyping      ActionType = "typing"
+	ActionRecordVoice ActionType = "record_voice"
 )
 
 // User represents a participant in a chat on any platform.
