@@ -34,8 +34,12 @@ func newSender(token string) *sender {
 	}
 }
 
-func (s *sender) execute(ctx context.Context, endpoint string, payload payload) (*message, error) {
+func (s *sender) executeMessage(ctx context.Context, endpoint string, payload payload) (*message, error) {
 	return executeWithRetry[*message](ctx, s, endpoint, payload)
+}
+
+func (s *sender) executeAction(ctx context.Context, endpoint string, payload payload) (bool, error) {
+	return executeWithRetry[bool](ctx, s, endpoint, payload)
 }
 
 func executeWithRetry[T any](ctx context.Context, s *sender, endpoint string, payload payload) (T, error) {

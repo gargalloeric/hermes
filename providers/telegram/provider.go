@@ -57,7 +57,7 @@ func (t *Telegram) Listen(ctx context.Context, out chan<- *hermes.Message) error
 func (t *Telegram) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	sendReq := buildSendPayload(req)
 
-	msg, err := t.sender.execute(ctx, sendReq.endpoint, sendReq.payload)
+	msg, err := t.sender.executeMessage(ctx, sendReq.endpoint, sendReq.payload)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func (t *Telegram) EditMessage(ctx context.Context, target *hermes.SentMessage, 
 		Text:      req.Text,
 	}
 
-	msg, err := t.sender.execute(ctx, "editMessageText", payload)
+	msg, err := t.sender.executeMessage(ctx, "editMessageText", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +98,6 @@ func (t *Telegram) SendAction(ctx context.Context, req hermes.ActionRequest) err
 		Action: mapAction(req.Action),
 	}
 
-	_, err := executeWithRetry[bool](ctx, t.sender, "sendChatAction", payload)
+	_, err := t.sender.executeAction(ctx, "sendChatAction", payload)
 	return err
 }
