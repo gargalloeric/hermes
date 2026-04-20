@@ -55,7 +55,7 @@ func executeWithRetry[T any](ctx context.Context, s *sender, endpoint string, pa
 
 		apiErr, ok := errors.AsType[*apiError](err)
 		if !ok || apiErr.RetryAfter <= 0 {
-			return result, nil
+			return result, err
 		}
 
 		if err := wait(ctx, apiErr.RetryAfter); err != nil {
