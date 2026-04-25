@@ -27,16 +27,16 @@ const (
 type EventType string
 
 const (
-	EventUserJoined  EventType = "user_joined"
-	EventUserLeft    EventType = "user_left"
-	EventMessageEdit EventType = "message_edited"
+	EventUserJoined EventType = "user_joined"
+	EventUserLeft   EventType = "user_left"
 )
 
 // ActionType defines the specific action to show in the platform UI.
 type ActionType string
 
 const (
-	ActionTyping ActionType = "typing"
+	ActionTyping      ActionType = "typing"
+	ActionRecordVoice ActionType = "record_voice"
 )
 
 // User represents a participant in a chat on any platform.
