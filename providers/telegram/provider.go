@@ -14,14 +14,14 @@ const (
 
 // Telgram serves as the communication bridge between Hermes code and the Telegram provider.
 type Telegram struct {
-	receiver UpdateReceiver
+	receiver reveiver
 	sender   *sender
 }
 
 func New(token string) *Telegram {
 	return &Telegram{
-		receiver: newPoller(token),
-		sender:   newSender(token),
+		receiver: newPoller(token, apiBase),
+		sender:   newSender(token, apiBase),
 	}
 }
 

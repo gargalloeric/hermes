@@ -17,6 +17,7 @@ type sender struct {
 	token      string
 	client     *http.Client
 	maxRetries int
+	baseURL    string
 }
 
 type sendRequest struct {
@@ -24,13 +25,14 @@ type sendRequest struct {
 	payload  payload
 }
 
-func newSender(token string) *sender {
+func newSender(token, baseURL string) *sender {
 	return &sender{
 		token: "bot" + token,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 		maxRetries: 2,
+		baseURL:    baseURL,
 	}
 }
 
@@ -44,7 +46,7 @@ func (s *sender) executeAction(ctx context.Context, endpoint string, payload pay
 
 func executeWithRetry[T any](ctx context.Context, s *sender, endpoint string, payload payload) (T, error) {
 	var result T
-	var target string = fmt.Sprintf("%s/%s/%s", apiBase, s.token, endpoint)
+	var target string = fmt.Sprintf("%s/%s/%s", s.baseURL, s.token, endpoint)
 
 	for range s.maxRetries {
 		msg, err := makeRequest(ctx, s, target, payload)

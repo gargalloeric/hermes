@@ -18,18 +18,19 @@ const (
 	maxBackoff            = 1 * time.Minute
 )
 
-// pollerReceiver is the poller implementation for receving Telegram updates.
-type pollerReceiver struct {
+// poller is the implementation of the long polling mechanism for receving Telegram updates.
+type poller struct {
 	token      string
 	backoff    time.Duration
 	maxRetries int
 	offset     int
 	updates    chan update
 	client     *http.Client
+	baseURL    string
 }
 
-func newPoller(token string) *pollerReceiver {
-	return &pollerReceiver{
+func newPoller(token, baseURL string) *poller {
+	return &poller{
 		token:      "bot" + token,
 		backoff:    1 * time.Second,
 		maxRetries: 2,
@@ -37,10 +38,11 @@ func newPoller(token string) *pollerReceiver {
 		client: &http.Client{
 			Timeout: 70 * time.Second,
 		},
+		baseURL: baseURL,
 	}
 }
 
-func (p *pollerReceiver) Start(ctx context.Context) error {
+func (p *poller) Start(ctx context.Context) error {
 	defer close(p.updates)
 
 	failCount := 0
@@ -78,11 +80,11 @@ func (p *pollerReceiver) Start(ctx context.Context) error {
 
 }
 
-func (p *pollerReceiver) Updates() <-chan update {
+func (p *poller) Updates() <-chan update {
 	return p.updates
 }
 
-func (p *pollerReceiver) getUpdates(ctx context.Context) ([]update, error) {
+func (p *poller) getUpdates(ctx context.Context) ([]update, error) {
 	endpoint := p.buildEndpoint()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -109,18 +111,18 @@ func (p *pollerReceiver) getUpdates(ctx context.Context) ([]update, error) {
 	return apiResp.Result, nil
 }
 
-func (p *pollerReceiver) buildEndpoint() string {
+func (p *poller) buildEndpoint() string {
 	params := url.Values{}
 	params.Add("offset", strconv.Itoa(p.offset))
 	params.Add("timeout", defaultLongPollingSec)
-	params.Add("allowed_updates", `["message","edited_message","chat_member"]`)
+	params.Add("allowed_updates", `["message","edited_messfage","chat_member"]`)
 
-	endpoint := fmt.Sprintf("%s/%s/getUpdates?%s", apiBase, p.token, params.Encode())
+	endpoint := fmt.Sprintf("%s/%s/getUpdates?%s", p.baseURL, p.token, params.Encode())
 
 	return endpoint
 }
 
-func (p *pollerReceiver) calculateBackoff(err error, fails int) time.Duration {
+func (p *poller) calculateBackoff(err error, fails int) time.Duration {
 	tgError, ok := errors.AsType[*apiError](err)
 	if ok && tgError.RetryAfter > 0 {
 		return tgError.RetryAfter

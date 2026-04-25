@@ -2,8 +2,8 @@ package telegram
 
 import "context"
 
-// UpdateReceiver represents the message provider that is going to provide the updates to the Telegram provider.
-type UpdateReceiver interface {
+// reveiver represents the message receiver that is going to provide the updates to the Telegram provider.
+type reveiver interface {
 	Start(ctx context.Context) error
 	Updates() <-chan update
 }
