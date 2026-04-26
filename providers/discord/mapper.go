@@ -81,3 +81,29 @@ func mapAttachmentType(contentType, filename string) hermes.AttachmentType {
 		return hermes.AttachmentFile
 	}
 }
+
+func mapEmbeds(atts []hermes.Attachment) []embed {
+	var embeds []embed
+	for _, att := range atts {
+		switch att.Type {
+		case hermes.AttachmentImage:
+			embeds = append(embeds, embed{
+				Title: att.FileName,
+				URL:   att.URL,
+				Image: embedMedia{
+					URL: att.URL,
+				},
+			})
+		case hermes.AttachmentVideo:
+			embeds = append(embeds, embed{
+				Title: att.FileName,
+				URL:   att.URL,
+				Video: embedMedia{
+					URL: att.URL,
+				},
+			})
+		}
+	}
+
+	return embeds
+}

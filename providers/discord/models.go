@@ -75,7 +75,20 @@ type attachment struct {
 
 // embed represents a Discord embed.
 type embed struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	URL         string `json:"url,omitempty"`
+	Title       string     `json:"title,omitempty"`
+	Description string     `json:"description,omitempty"`
+	URL         string     `json:"url,omitempty"`
+	Image       embedMedia `json:"image,omitempty"`
+	Video       embedMedia `json:"video,omitempty"`
+}
+
+type embedMedia struct {
+	URL string `json:"url"`
+}
+
+// payload represents the data payload sent to the Discord API.
+type payload struct {
+	Content          string  `json:"content,omitempty"`
+	MessageReference string  `json:"message_reference,omitempty"`
+	Embeds           []embed `json:"embeds,omitempty"`
 }

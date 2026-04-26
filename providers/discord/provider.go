@@ -9,15 +9,18 @@ import (
 
 const (
 	gatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
+	apiURL     = "https://discord.com/api/v10"
 )
 
 type Discord struct {
 	gateway *gateway
+	sender  *sender
 }
 
 func New(token string) *Discord {
 	return &Discord{
 		gateway: newGateway(token, gatewayURL),
+		sender:  newSender(token, apiURL),
 	}
 }
 
@@ -51,6 +54,13 @@ func (d *Discord) Listen(ctx context.Context, out chan<- *hermes.Message) error 
 }
 
 func (d *Discord) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
+	sendReq := buildPayload(req)
+
+	_, err := d.sender.executeMessage(ctx, sendReq.endpoint, sendReq.payload)
+	if err != nil {
+		return nil, err
+	}
+
 	return nil, nil
 }
 
