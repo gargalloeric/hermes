@@ -38,6 +38,8 @@ const (
 
 type gatewaySession struct {
 	sequence atomic.Int64
+	ack      atomic.Bool
+	backoff  time.Duration
 
 	mu        sync.RWMutex
 	id        string
@@ -57,12 +59,43 @@ func newGateway(token string, url string) *gateway {
 		token:    token,
 		url:      url,
 		messages: make(chan message),
+		session: gatewaySession{
+			backoff: 1 * time.Second,
+		},
 	}
 }
 
 func (g *gateway) Start(ctx context.Context) error {
 	defer close(g.messages)
 
+	for {
+		err := g.connectAndRead(ctx)
+
+		if ctx.Err() != nil {
+			return nil
+		}
+
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(g.session.backoff):
+				if g.session.backoff < 60*time.Second {
+					g.session.backoff *= 2
+				}
+			}
+		} else {
+			g.session.backoff = 1 * time.Second
+		}
+	}
+
+}
+
+func (g *gateway) Messages() <-chan message {
+	return g.messages
+}
+
+func (g *gateway) connectAndRead(ctx context.Context) error {
 	g.session.mu.RLock()
 	dialURL := g.url
 	if g.session.resumeURL != "" {
@@ -94,10 +127,6 @@ func (g *gateway) Start(ctx context.Context) error {
 	}
 }
 
-func (g *gateway) Messages() <-chan message {
-	return g.messages
-}
-
 func (g *gateway) handle(ctx context.Context, conn *websocket.Conn, event event) error {
 	if event.S != 0 {
 		g.session.sequence.Store(event.S)
@@ -105,36 +134,46 @@ func (g *gateway) handle(ctx context.Context, conn *websocket.Conn, event event)
 
 	switch event.Op {
 	case opHello:
-		var h hello
-		if err := json.Unmarshal(event.D, &h); err != nil {
-			return fmt.Errorf("failed to parse hello message: %w", err)
-		}
-
-		go g.startHeartbeat(ctx, conn, h.HeartbeatInterval)
-
-		g.session.mu.RLock()
-		id := g.session.id
-		g.session.mu.RUnlock()
-
-		if id != "" {
-			return g.resume(ctx, conn, id)
-		}
-
-		return g.identify(ctx, conn)
+		return g.hello(ctx, conn, event)
 
 	case opDispatch:
 		return g.dispatch(event)
+
 	case opReconnect:
-		// TODO: Handle reconnect op
+		return fmt.Errorf("server requested reconnect")
+
 	case opInvalidSession:
-		// TODO: Handle invalid session op
+		return g.invalidSession(event)
+
 	case opHeartbeat:
-		// TODO: Handle heartbeat op
+		return write(ctx, conn, opHeartbeat, g.session.sequence.Load())
+
 	case opHeartbeatAck:
-		// TODO: Handle heartbeat ack op
+		g.session.ack.Store(true)
 	}
 
 	return nil
+}
+
+func (g *gateway) hello(ctx context.Context, conn *websocket.Conn, event event) error {
+	var h hello
+	if err := json.Unmarshal(event.D, &h); err != nil {
+		return fmt.Errorf("failed to parse hello message: %w", err)
+	}
+
+	g.session.ack.Store(true)
+	go g.startHeartbeat(ctx, conn, h.HeartbeatInterval)
+
+	g.session.mu.RLock()
+	id := g.session.id
+	g.session.mu.RUnlock()
+
+	if id != "" {
+		return g.resume(ctx, conn, id)
+	}
+
+	return g.identify(ctx, conn)
+
 }
 
 func (g *gateway) startHeartbeat(ctx context.Context, conn *websocket.Conn, interval int) {
@@ -148,6 +187,13 @@ func (g *gateway) startHeartbeat(ctx context.Context, conn *websocket.Conn, inte
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !g.session.ack.Load() {
+				conn.Close(websocket.StatusPolicyViolation, "zombie connection")
+				return
+			}
+
+			g.session.ack.Store(false)
+
 			if err := write(ctx, conn, opHeartbeat, g.session.sequence.Load()); err != nil {
 				return // Connection likely closed, the Read loop will handle the error
 			}
@@ -177,6 +223,21 @@ func (g *gateway) resume(ctx context.Context, conn *websocket.Conn, sid string) 
 	}
 
 	return write(ctx, conn, opResume, resume)
+}
+
+func (g *gateway) invalidSession(event event) error {
+	var resumable bool
+	if err := json.Unmarshal(event.D, &resumable); err != nil {
+		return fmt.Errorf("failed to parse resumable: %w", err)
+	}
+
+	if !resumable {
+		g.session.mu.Lock()
+		g.session.id = ""
+		g.session.mu.Unlock()
+	}
+
+	return fmt.Errorf("session invalid (resumable: %v)", resumable)
 }
 
 func (g *gateway) dispatch(event event) error {

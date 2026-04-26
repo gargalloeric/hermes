@@ -11,14 +11,43 @@ const (
 	gatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
 )
 
-type Discord struct{}
+type Discord struct {
+	gateway *gateway
+}
+
+func New(token string) *Discord {
+	return &Discord{
+		gateway: newGateway(token, gatewayURL),
+	}
+}
 
 func (d *Discord) Name() string {
 	return "discord"
 }
 
 func (d *Discord) Listen(ctx context.Context, out chan<- *hermes.Message) error {
-	return nil
+	errChan := make(chan error, 1)
+
+	go func() {
+		errChan <- d.gateway.Start(ctx)
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errChan:
+			return err
+		case msg, ok := <-d.gateway.Messages():
+			if !ok {
+				return nil
+			}
+
+			if hMsg := mapMessageToHermes(d.Name(), msg); hMsg != nil {
+				out <- hMsg
+			}
+		}
+	}
 }
 
 func (d *Discord) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
