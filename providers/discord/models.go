@@ -2,6 +2,7 @@ package discord
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -15,7 +16,7 @@ type event struct {
 
 // hello represents the first message received from Discord.
 type hello struct {
-	HeartbeatInterval int `json:"heartbit_interval"`
+	HeartbeatInterval int `json:"heartbeat_interval"`
 }
 
 // identify represents the message sent to tell Discord who's the client.
@@ -75,11 +76,11 @@ type attachment struct {
 
 // embed represents a Discord embed.
 type embed struct {
-	Title       string     `json:"title,omitempty"`
-	Description string     `json:"description,omitempty"`
-	URL         string     `json:"url,omitempty"`
-	Image       embedMedia `json:"image,omitempty"`
-	Video       embedMedia `json:"video,omitempty"`
+	Title       string      `json:"title,omitempty"`
+	Description string      `json:"description,omitempty"`
+	URL         string      `json:"url,omitempty"`
+	Image       *embedMedia `json:"image,omitempty"`
+	Video       *embedMedia `json:"video,omitempty"`
 }
 
 type embedMedia struct {
@@ -88,7 +89,37 @@ type embedMedia struct {
 
 // payload represents the data payload sent to the Discord API.
 type payload struct {
-	Content          string  `json:"content,omitempty"`
-	MessageReference string  `json:"message_reference,omitempty"`
-	Embeds           []embed `json:"embeds,omitempty"`
+	Content          string            `json:"content,omitempty"`
+	MessageReference *messageReference `json:"message_reference,omitempty"`
+	Embeds           []embed           `json:"embeds,omitempty"`
+}
+
+type messageReference struct {
+	MessageID string `json:"message_id"`
+}
+
+// file represents a file content.
+type file struct {
+	Filename string
+	Content  []byte
+}
+
+// represents a response from the Discord API.
+type response struct {
+	// embbed the message as the response is a message with extra fields
+	message
+	Ok          bool    `json:"-"`
+	Description string  `json:"message,omitempty"`
+	ErrorCode   int     `json:"code,omitempty"`
+	RetryAfter  float64 `json:"retry_after,omitempty"`
+}
+
+type dsError struct {
+	Code       int
+	Message    string
+	RetryAfter time.Duration
+}
+
+func (e *dsError) Error() string {
+	return fmt.Sprintf("discord API error (%d): %s", e.Code, e.Message)
 }

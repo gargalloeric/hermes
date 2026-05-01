@@ -82,15 +82,16 @@ func mapAttachmentType(contentType, filename string) hermes.AttachmentType {
 	}
 }
 
-func mapEmbeds(atts []hermes.Attachment) []embed {
+func mapMedia(atts []hermes.Attachment) ([]embed, []hermes.Attachment) {
 	var embeds []embed
+	var files []hermes.Attachment
 	for _, att := range atts {
 		switch att.Type {
 		case hermes.AttachmentImage:
 			embeds = append(embeds, embed{
 				Title: att.FileName,
 				URL:   att.URL,
-				Image: embedMedia{
+				Image: &embedMedia{
 					URL: att.URL,
 				},
 			})
@@ -98,12 +99,24 @@ func mapEmbeds(atts []hermes.Attachment) []embed {
 			embeds = append(embeds, embed{
 				Title: att.FileName,
 				URL:   att.URL,
-				Video: embedMedia{
+				Video: &embedMedia{
 					URL: att.URL,
 				},
 			})
+		default:
+			files = append(files, att)
 		}
 	}
 
-	return embeds
+	return embeds, files
+}
+
+func mapAction(a hermes.ActionType) string {
+	switch a {
+	case hermes.ActionTyping:
+		return "typing"
+	// Discord only supports typing indicator, so we fallback to typing for every type of action.
+	default:
+		return "typing"
+	}
 }
