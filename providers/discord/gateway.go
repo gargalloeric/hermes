@@ -255,7 +255,7 @@ func (g *gateway) dispatch(event event) error {
 		return nil
 	}
 
-	if event.T == eventMessageCreate {
+	if event.T != eventMessageCreate {
 		return nil
 	}
 
