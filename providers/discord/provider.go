@@ -2,6 +2,8 @@ package discord
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gargalloeric/hermes"
@@ -46,7 +48,8 @@ func (d *Discord) Listen(ctx context.Context, out chan<- *hermes.Message) error 
 				return nil
 			}
 
-			if hMsg := mapMessageToHermes(d.Name(), msg); hMsg != nil {
+			hMsg := mapMessageToHermes(d.Name(), msg)
+			if hMsg != nil && !hMsg.Sender.IsBot {
 				out <- hMsg
 			}
 		}
@@ -56,16 +59,35 @@ func (d *Discord) Listen(ctx context.Context, out chan<- *hermes.Message) error 
 func (d *Discord) SendMessage(ctx context.Context, req hermes.MessageRequest) (*hermes.SentMessage, error) {
 	sendReq := buildPayload(req)
 
-	_, err := d.sender.executeMessage(ctx, sendReq.endpoint, sendReq.payload)
+	msg, err := d.sender.executeMessage(ctx, sendReq.endpoint, http.MethodPost, sendReq.payload, sendReq.files)
 	if err != nil {
 		return nil, err
 	}
 
-	return nil, nil
+	return &hermes.SentMessage{
+		ID:       msg.ID,
+		Platform: d.Name(),
+		ChatID:   msg.ChannelID,
+	}, nil
 }
 
 func (d *Discord) EditMessage(ctx context.Context, target *hermes.SentMessage, req hermes.MessageRequest) (*hermes.SentMessage, error) {
-	return nil, nil
+	endpoint := fmt.Sprintf("/channels/%s/messages/%s", target.ChatID, target.ID)
+
+	payload := payload{
+		Content: req.Text,
+	}
+
+	msg, err := d.sender.executeMessage(ctx, endpoint, http.MethodPatch, payload, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &hermes.SentMessage{
+		ID:       msg.ID,
+		Platform: d.Name(),
+		ChatID:   msg.ChannelID,
+	}, nil
 }
 
 func (d *Discord) ActionTimeout() time.Duration {
@@ -73,5 +95,10 @@ func (d *Discord) ActionTimeout() time.Duration {
 }
 
 func (d *Discord) SendAction(ctx context.Context, req hermes.ActionRequest) error {
-	return nil
+	action := mapAction(req.Action)
+	endpoint := fmt.Sprintf("/channels/%s/%s", req.RecipientID, action)
+
+	_, err := d.sender.executeMessage(ctx, endpoint, http.MethodPost, payload{}, nil)
+
+	return err
 }
