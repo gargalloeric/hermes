@@ -98,12 +98,6 @@ type messageReference struct {
 	MessageID string `json:"message_id"`
 }
 
-// file represents a file content.
-type file struct {
-	Filename string
-	Content  []byte
-}
-
 // represents a response from the Discord API.
 type response struct {
 	// embbed the message as the response is a message with extra fields

@@ -40,39 +40,49 @@ func newSender(token, baseURL string) *sender {
 }
 
 func (s *sender) executeMessage(ctx context.Context, endpoint, method string, payload payload, atts []hermes.Attachment) (*message, error) {
-	var payloadBytes []byte
-	contentType := "application/json"
+	for i := 0; i < s.maxRetries; i++ {
+		var body io.Reader
+		var contentType string = "application/json"
 
-	if len(atts) > 0 {
-		files, err := fetchFiles(ctx, s, atts)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch attachments: %w", err)
+		if len(atts) > 0 {
+			stream, cType := buildMultipartStream(ctx, s, payload, atts)
+			body = stream
+			contentType = cType
+		} else {
+			payloadBytes, err := json.Marshal(payload)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal JSON payload: %w", err)
+			}
+			body = bytes.NewReader(payloadBytes)
 		}
 
-		encoded, err := encode(payload, files)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode multipart payload: %w", err)
+		dResp, err := makeRequest(ctx, s, endpoint, method, contentType, body)
+
+		if closer, ok := body.(io.ReadCloser); ok {
+			closer.Close()
 		}
 
-		payloadBytes = encoded.Bytes
-		contentType = encoded.ContentType
-	} else {
-		var err error
-		payloadBytes, err = json.Marshal(payload)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal the JSON payload: %w", err)
+			dsError, ok := errors.AsType[*dsError](err)
+			if ok && dsError.RetryAfter > 0 {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(dsError.RetryAfter):
+					continue
+				}
+			}
+
+			return nil, err
 		}
+
+		return &dResp.message, nil
 	}
 
-	dresp, err := executeWithRetry(ctx, s, endpoint, method, contentType, payloadBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return &dresp.message, nil
+	return nil, fmt.Errorf("failed to send message after %d attempts", s.maxRetries)
 }
 
-func (s *sender) downloadFile(ctx context.Context, url string) ([]byte, error) {
+func (s *sender) downloadFile(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download file request for '%s': %w", url, err)
@@ -82,13 +92,13 @@ func (s *sender) downloadFile(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to send download request for '%s': %w", url, err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
 		return nil, fmt.Errorf("unexpected status code %d downloading file '%s': %w", resp.StatusCode, url, err)
 	}
 
-	return io.ReadAll(resp.Body)
+	return resp, nil
 }
 
 func buildPayload(req hermes.MessageRequest) sendRequest {
@@ -119,40 +129,18 @@ func buildPayload(req hermes.MessageRequest) sendRequest {
 	return sr
 }
 
-func executeWithRetry(ctx context.Context, s *sender, endpoint, method, contentType string, payload []byte) (*response, error) {
-	for range s.maxRetries {
-		dResp, err := makeRequest(ctx, s, endpoint, method, contentType, payload)
-		if err != nil {
-			dsError, ok := errors.AsType[*dsError](err)
-			if ok && dsError.RetryAfter > 0 {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(dsError.RetryAfter):
-					continue
-				}
-			}
-
-			return nil, err
-		}
-
-		return dResp, nil
-	}
-
-	return nil, fmt.Errorf("failed to send message after %d retries", s.maxRetries)
-}
-
-func makeRequest(ctx context.Context, s *sender, endpoint, method, contentType string, payload []byte) (*response, error) {
+func makeRequest(ctx context.Context, s *sender, endpoint, method, contentType string, body io.Reader) (*response, error) {
 	url := fmt.Sprintf("%s%s", s.baseURL, endpoint)
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", s.token)
 	req.Header.Set("User-Agent", hermes.UserAgent())
-	if len(payload) > 0 {
+
+	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 
@@ -180,68 +168,67 @@ func makeRequest(ctx context.Context, s *sender, endpoint, method, contentType s
 	return &dResp, nil
 }
 
-func fetchFiles(ctx context.Context, s *sender, atts []hermes.Attachment) ([]file, error) {
-	files := make([]file, len(atts))
-	for i, att := range atts {
-		content, err := s.downloadFile(ctx, att.URL)
+func buildMultipartStream(ctx context.Context, s *sender, payload payload, atts []hermes.Attachment) (io.ReadCloser, string) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		payloadJson, err := json.Marshal(payload)
 		if err != nil {
-			// TODO: Improve strategy for a failed file download. For now, if one fails an error will be returned.
-			return nil, err
+			marshalError := fmt.Errorf("failed to marshal payload: %w", err)
+			pw.CloseWithError(marshalError)
+			return
 		}
-		files[i] = file{
-			Filename: att.FileName,
-			Content:  content,
-		}
-	}
-	return files, nil
-}
 
-type encodedData struct {
-	Bytes       []byte
-	ContentType string
-}
-
-// encode encodes the payload as a form data payload tailored for the Discord API.
-func encode(payload payload, files []file) (*encodedData, error) {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	var buff bytes.Buffer
-	writer := multipart.NewWriter(&buff)
-
-	pJson, err := writer.CreateFormField("payload_json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create 'payload_json' field: %w", err)
-	}
-
-	_, err = pJson.Write(payloadBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write data to 'payload_json' field: %w", err)
-	}
-
-	for i, file := range files {
-		fieldName := fmt.Sprintf("files[%d]", i)
-		pFile, err := writer.CreateFormFile(fieldName, file.Filename)
+		pJson, err := writer.CreateFormField("payload_json")
 		if err != nil {
-			return nil, fmt.Errorf("failed to encode file %s: %w", file.Filename, err)
+			fieldError := fmt.Errorf("failed to create form field: %w", err)
+			pw.CloseWithError(fieldError)
 		}
 
-		_, err = io.Copy(pFile, bytes.NewReader(file.Content))
+		_, err = pJson.Write(payloadJson)
 		if err != nil {
-			return nil, fmt.Errorf("failed to write file %s to field %s: %w", file.Filename, fieldName, err)
+			writeError := fmt.Errorf("failed to write data to 'payload_json' field: %w", err)
+			pw.CloseWithError(writeError)
+			return
 		}
-	}
 
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
-	}
+		for i, att := range atts {
+			if err := ctx.Err(); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
 
-	return &encodedData{
-		Bytes:       buff.Bytes(),
-		ContentType: writer.FormDataContentType(),
-	}, nil
+			fileName := fmt.Sprintf("files[%d]", i)
+			part, err := writer.CreateFormFile(fileName, att.FileName)
+			if err != nil {
+				fieldError := fmt.Errorf("failed to create form file: %w", err)
+				pw.CloseWithError(fieldError)
+				return
+			}
+
+			resp, err := s.downloadFile(ctx, att.URL)
+			if err != nil {
+				resp.Body.Close()
+				pw.CloseWithError(err)
+				return
+			}
+
+			_, err = io.Copy(part, resp.Body)
+			resp.Body.Close()
+
+			if err != nil {
+				copyError := fmt.Errorf("failed to copy file stream: %w", err)
+				pw.CloseWithError(copyError)
+				return
+			}
+		}
+	}()
+
+	return pr, writer.FormDataContentType()
 }
 
 // wrapError centralizes the logic for extracting rate limits and error messages.
