@@ -6,72 +6,106 @@ import (
 	"time"
 )
 
-// dsPayload is the generic envelope for Discord Gateway communication
-type dsPayload struct {
+// event is the generic envelope for Discord Gateway communication.
+type event struct {
 	Op int             `json:"op"`
 	D  json.RawMessage `json:"d"`
-	S  int64           `json:"s,omitempty"` // Sequence number
-	T  string          `json:"t,omitempty"` // Event name
+	S  int64           `json:"s,omitempty"` // sequence number
+	T  string          `json:"t"`           // event name
 }
 
-// dsHello is the first message received from Discord
-type dsHello struct {
+// hello represents the first message received from Discord.
+type hello struct {
 	HeartbeatInterval int `json:"heartbeat_interval"`
 }
 
-// dsIdentify is the payload we send to authenticate
-type dsIdentity struct {
-	Token      string               `json:"token"`
-	Intents    int                  `json:"intents"`
-	Properties dsIdentifyProperties `json:"properties"`
+// identify represents the message sent to tell Discord who's the client.
+type identify struct {
+	Token      string             `json:"token"`
+	Intents    int                `json:"intents"`
+	Properties identifyProperties `json:"properties"`
 }
 
-type dsIdentifyProperties struct {
+type identifyProperties struct {
 	OS      string `json:"os"`
 	Browser string `json:"browser"`
 	Device  string `json:"device"`
 }
 
-// dsMessage represents a Discord message object
-type dsMessage struct {
-	ID              string         `json:"id"`
-	ChannelID       string         `json:"channel_id"`
-	Author          dsUser         `json:"author"`
-	Content         string         `json:"content"`
-	Timestamp       time.Time      `json:"timestamp"`
-	Attachments     []dsAttachment `json:"attachments"`
-	Embeds          []dsEmbed      `json:"embeds"`
-	MentionEveryone bool           `json:"mention_everyone"`
-	Type            int            `json:"type"`
+// resume represents the message sent to tell Discord to resume the connection with the client.
+type resume struct {
+	Token     string `json:"token"`
+	SessionID string `json:"session_id"`
+	Seq       int64  `json:"seq"`
 }
 
-type dsUser struct {
+// ready represents the message sent by Discord when has accepted your connection and it's ready to stream data.
+type ready struct {
+	SessionID string `json:"session_id"`
+	ResumeURL string `json:"resume_gateway_url"`
+}
+
+// message represents a Discord message.
+type message struct {
+	ID              string       `json:"id"`
+	ChannelID       string       `json:"channel_id"`
+	Author          user         `json:"author"`
+	Content         string       `json:"content"`
+	Timestamp       time.Time    `json:"timestamp"`
+	Attachments     []attachment `json:"attachments"`
+	Embeds          []embed      `json:"embeds"`
+	MentionEveryone bool         `json:"mention_everyone"`
+	Type            int          `json:"type"`
+}
+
+// user represents a Discord user.
+type user struct {
 	ID            string `json:"id"`
 	Username      string `json:"username"`
 	Discriminator string `json:"discriminator"`
 	Bot           bool   `json:"bot"`
 }
 
-type dsAttachment struct {
+// attachment represents a Discord attachment.
+type attachment struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	URL         string `json:"url"`
 	ContentType string `json:"content_type"`
 }
 
-type dsEmbed struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	URL         string `json:"url,omitempty"`
+// embed represents a Discord embed.
+type embed struct {
+	Title       string      `json:"title,omitempty"`
+	Description string      `json:"description,omitempty"`
+	URL         string      `json:"url,omitempty"`
+	Image       *embedMedia `json:"image,omitempty"`
+	Video       *embedMedia `json:"video,omitempty"`
 }
 
-// dsResponse acts as the internal envelope, mirroring the Telegram pattern.
-type dsResponse struct {
-	dsMessage
+type embedMedia struct {
+	URL string `json:"url"`
+}
+
+// payload represents the data payload sent to the Discord API.
+type payload struct {
+	Content          string            `json:"content,omitempty"`
+	MessageReference *messageReference `json:"message_reference,omitempty"`
+	Embeds           []embed           `json:"embeds,omitempty"`
+}
+
+type messageReference struct {
+	MessageID string `json:"message_id"`
+}
+
+// represents a response from the Discord API.
+type response struct {
+	// embbed the message as the response is a message with extra fields
+	message
 	Ok          bool    `json:"-"`
-	Description string  `json:"message,omitempty"`     // Populated on Error
-	ErrorCode   int     `json:"code,omitempty"`        // Populated on Error
-	RetryAfter  float64 `json:"retry_after,omitempty"` // Populated on 429
+	Description string  `json:"message,omitempty"`
+	ErrorCode   int     `json:"code,omitempty"`
+	RetryAfter  float64 `json:"retry_after,omitempty"`
 }
 
 type dsError struct {
@@ -82,20 +116,4 @@ type dsError struct {
 
 func (e *dsError) Error() string {
 	return fmt.Sprintf("discord API error (%d): %s", e.Code, e.Message)
-}
-
-type dsFile struct {
-	FileName string
-	Data     []byte
-}
-
-type dsReady struct {
-	SessionID string `json:"session_id"`
-	ResumeURL string `json:"resume_gateway_url"`
-}
-
-type dsResume struct {
-	Token     string `json:"token"`
-	SessionID string `json:"session_id"`
-	Seq       int64  `json:"seq"`
 }
