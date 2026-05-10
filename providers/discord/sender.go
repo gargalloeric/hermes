@@ -210,7 +210,6 @@ func encode(payload payload, files []file) (*encodedData, error) {
 
 	var buff bytes.Buffer
 	writer := multipart.NewWriter(&buff)
-	defer writer.Close()
 
 	pJson, err := writer.CreateFormField("payload_json")
 	if err != nil {
